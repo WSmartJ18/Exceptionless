@@ -15,7 +15,9 @@ using System.Web.Http;
 using AutoMapper;
 using Exceptionless.Api.Controllers;
 using Exceptionless.Api.Models;
+using Exceptionless.Api.Utility;
 using Exceptionless.Core.Authorization;
+using Exceptionless.Core.Extensions;
 using Exceptionless.Core.Repositories;
 using Exceptionless.Models;
 using Exceptionless.Models.Admin;
@@ -23,7 +25,7 @@ using Exceptionless.Models.Admin;
 namespace Exceptionless.App.Controllers.API {
     [RoutePrefix(API_PREFIX + "/tokens")]
     [Authorize(Roles = AuthorizationRoles.User)]
-    public class TokenController : RepositoryApiController<ITokenRepository, Token, ViewToken, NewToken, Token> {
+    public class TokenController : RepositoryApiController<ITokenRepository, Token, Token, NewToken, Token> {
         private readonly IApplicationRepository _applicationRepository;
         private readonly IProjectRepository _projectRepository;
 
@@ -33,21 +35,23 @@ namespace Exceptionless.App.Controllers.API {
         }
 
         #region CRUD
-    
+        
         [HttpGet]
         [Route("~/" + API_PREFIX + "/organizations/{organizationId:objectid}/tokens")]
-        public IHttpActionResult GetByOrganization(string organizationId, string before = null, string after = null, int limit = 10) {
+        public IHttpActionResult GetByOrganization(string organizationId, int page = 1, int limit = 10) {
             if (String.IsNullOrEmpty(organizationId) || !CanAccessOrganization(organizationId))
                 return NotFound();
 
-            var options = new PagingOptions { Before = before, After = after, Limit = limit };
-            var results = _repository.GetByTypeAndOrganizationId(TokenType.Access, organizationId, options).Select(Mapper.Map<Token, ViewToken>).ToList();
-            return OkWithResourceLinks(results, options.HasMore, e => e.Id);
+            page = GetPage(page);
+            limit = GetLimit(limit);
+            var options = new PagingOptions { Page = page, Limit = limit };
+            var results = _repository.GetByTypeAndOrganizationId(TokenType.Access, organizationId, options).Select(Mapper.Map<Token, Token>).ToList();
+            return OkWithResourceLinks(results, options.HasMore, page);
         }
 
         [HttpGet]
         [Route("~/" + API_PREFIX + "/projects/{projectId:objectid}/tokens")]
-        public IHttpActionResult GetByProject(string projectId, string before = null, string after = null, int limit = 10) {
+        public IHttpActionResult GetByProject(string projectId, int page = 1, int limit = 10) {
             if (String.IsNullOrEmpty(projectId))
                 return NotFound();
 
@@ -55,9 +59,11 @@ namespace Exceptionless.App.Controllers.API {
             if (project == null || !CanAccessOrganization(project.OrganizationId))
                 return NotFound();
 
-            var options = new PagingOptions { Before = before, After = after, Limit = limit };
-            var results = _repository.GetByTypeAndProjectId(TokenType.Access, projectId, options).Select(Mapper.Map<Token, ViewToken>).ToList();
-            return OkWithResourceLinks(results, options.HasMore, e => e.Id);
+            page = GetPage(page);
+            limit = GetLimit(limit);
+            var options = new PagingOptions { Page = page, Limit = limit };
+            var results = _repository.GetByTypeAndProjectId(TokenType.Access, projectId, options).Select(Mapper.Map<Token, Token>).ToList();
+            return OkWithResourceLinks(results, options.HasMore && !NextPageExceedsSkipLimit(page, limit), page);
         }
 
         [HttpGet]
@@ -72,7 +78,7 @@ namespace Exceptionless.App.Controllers.API {
 
             var token = _repository.GetByTypeAndProjectId(TokenType.Access, projectId, new PagingOptions { Limit = 1 }).FirstOrDefault();
             if (token != null)
-                return Ok(Mapper.Map<Token, ViewToken>(token));
+                return Ok(Mapper.Map<Token, Token>(token));
 
             return Post(new NewToken { OrganizationId = project.OrganizationId, ProjectId = projectId});
         }
@@ -83,8 +89,6 @@ namespace Exceptionless.App.Controllers.API {
             return base.GetById(id);
         }
 
-        // TODO: Verify that we can create new tokens at an org or 
-        // project level with specified scopes (Client, User, Admin).
         [Route]
         [HttpPost]
         public override IHttpActionResult Post(NewToken value) {
@@ -92,9 +96,9 @@ namespace Exceptionless.App.Controllers.API {
         }
 
         [HttpDelete]
-        [Route("{id:objectid}")]
-        public override IHttpActionResult Delete(string id) {
-            return base.Delete(id);
+        [Route("{ids:objectids}")]
+        public override IHttpActionResult Delete([CommaDelimitedArray]string[] ids) {
+            return base.Delete(ids);
         }
 
         #endregion
@@ -106,28 +110,36 @@ namespace Exceptionless.App.Controllers.API {
 
         protected override PermissionResult CanAdd(Token value) {
             if (String.IsNullOrEmpty(value.OrganizationId))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.Deny;
 
-            // TODO: Code review this.
             if (value.Scopes.Contains("admin") && !User.IsInRole(AuthorizationRoles.GlobalAdmin))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.Deny;
 
             Project project = _projectRepository.GetById(value.ProjectId, true);
             if (!IsInProject(project))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.Deny;
 
             if (!String.IsNullOrEmpty(value.ApplicationId)) {
                 var application = _applicationRepository.GetById(value.ApplicationId, true);
                 if (application == null || !IsInOrganization(application.OrganizationId))
-                    return PermissionResult.DenyWithResult(BadRequest());
+                    return PermissionResult.Deny;
             }
 
             return base.CanAdd(value);
         }
 
+        protected override Token AddModel(Token value) {
+            value.Id = Guid.NewGuid().ToString("N");
+            value.CreatedUtc = value.ModifiedUtc = DateTime.UtcNow;
+            value.Type = TokenType.Access;
+            value.UserId = User.GetUserId();
+
+            return base.AddModel(value);
+        }
+
         protected override PermissionResult CanDelete(Token value) {
             if (!IsInProject(value.ProjectId))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.DenyWithNotFound(value.Id);
 
             return base.CanDelete(value);
         }
@@ -144,6 +156,13 @@ namespace Exceptionless.App.Controllers.API {
                 return false;
 
             return IsInOrganization(value.OrganizationId);
+        }
+
+        protected override void CreateMaps() {
+            if (Mapper.FindTypeMapFor<NewToken, Token>() == null)
+                Mapper.CreateMap<NewToken, Token>().ForMember(m => m.Type, m => m.Ignore());
+
+            base.CreateMaps();
         }
     }
 }

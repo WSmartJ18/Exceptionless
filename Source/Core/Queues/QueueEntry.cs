@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Threading.Tasks;
 
 namespace Exceptionless.Core.Queues {
     public class QueueEntry<T> : IDisposable where T: class {
@@ -16,18 +15,21 @@ namespace Exceptionless.Core.Queues {
 
         public T Value { get; private set; }
 
-        public Task CompleteAsync() {
+        public void Complete() {
+            if (_isCompleted)
+                return;
+
             _isCompleted = true;
-            return _queue.CompleteAsync(Id);
+            _queue.Complete(Id);
         }
 
-        public Task AbandonAsync() {
-            return _queue.AbandonAsync(Id);
+        public void Abandon() {
+            _queue.Abandon(Id);
         }
 
         public virtual void Dispose() {
             if (!_isCompleted)
-                AbandonAsync().Wait();
+                Abandon();
         }
     }
 }

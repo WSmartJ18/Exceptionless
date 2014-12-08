@@ -4,24 +4,22 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Threading.Tasks;
 using CodeSmith.Core.CommandLine;
 using CodeSmith.Core.Extensions;
 using Exceptionless.Core.Extensions;
+using Exceptionless.Core.Plugins.EventProcessor;
 using Exceptionless.Core.Plugins.EventUpgrader;
+using Exceptionless.Core.Repositories;
 using Exceptionless.Core.Utility;
-using Exceptionless.Core.Validation;
 using Exceptionless.Models;
 using Exceptionless.Models.Data;
 using FluentValidation;
-using FluentValidation.Results;
 using MongoDB.Bson;
 using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.IdGenerators;
 using MongoDB.Bson.Serialization.Serializers;
 using MongoDB.Driver;
 using MongoDB.Driver.Builders;
-using MongoDB.Driver.Linq;
 using Nest;
 using Nest.Resolvers;
 using Newtonsoft.Json;
@@ -32,8 +30,6 @@ using OldModels = Exceptionless.EventMigration.Models;
 
 namespace Exceptionless.EventMigration {
     internal class Program {
-        private static readonly object _lock = new object();
-
         private static int Main(string[] args) {
             OutputHeader();
 
@@ -59,32 +55,32 @@ namespace Exceptionless.EventMigration {
                 const int BatchSize = 25;
 
                 var container = CreateContainer();
-                var serverUri = new Uri("http://localhost:9200");
+                var searchclient = container.GetInstance<IElasticClient>();
 
-                var searchclient = GetElasticClient(serverUri, ca.DeleteExistingIndexes);
+                if (ca.DeleteExistingIndexes)
+                    searchclient.DeleteIndex(i => i.AllIndices());
+
                 var serializerSettings = new JsonSerializerSettings { MissingMemberHandling = MissingMemberHandling.Ignore };
                 serializerSettings.AddModelConverters();
 
                 ISearchResponse<Stack> mostRecentStack = null;
                 if (ca.Resume)
-                    mostRecentStack = searchclient.Search<Stack>(d => d.AllIndices().Type(typeof(Stack)).SortDescending("_uid").Source(s => s.Include(e => e.Id)).Take(1));
+                    mostRecentStack = searchclient.Search<Stack>(d => d.AllIndices().Type(typeof(Stack)).SortDescending("_uid").Source(s => s.Include(e => e.Id)).Size(1));
                 ISearchResponse<PersistentEvent> mostRecentEvent = null;
                 if (ca.Resume)
-                    mostRecentEvent = searchclient.Search<PersistentEvent>(d => d.AllIndices().Type(typeof(PersistentEvent)).SortDescending("_uid").Source(s => s.Include(e => e.Id)).Take(1));
+                    mostRecentEvent = searchclient.Search<PersistentEvent>(d => d.AllIndices().Type(typeof(PersistentEvent)).SortDescending("_uid").Source(s => s.Include(e => e.Id)).Size(1));
 
-                const bool validate = false;
-
-                IBulkResponse response = null;
                 int total = 0;
                 var stopwatch = new Stopwatch();
                 if (!ca.SkipStacks) {
-                    var validator = new ErrorStackValidator();
                     stopwatch.Start();
                     var errorStackCollection = GetErrorStackCollection(container);
                     var query = mostRecentStack != null && mostRecentStack.Total > 0 ? Query.GT(ErrorStackFieldNames.Id, ObjectId.Parse(mostRecentStack.Hits.First().Id)) : Query.Null;
                     var stacks = errorStackCollection.Find(query).SetSortOrder(SortBy.Ascending(ErrorStackFieldNames.Id)).SetLimit(BatchSize).ToList();
                     while (stacks.Count > 0) {
                         stacks.ForEach(s => {
+                            s.Type = s.SignatureInfo != null && s.SignatureInfo.ContainsKey("HttpMethod") && s.SignatureInfo.ContainsKey("Path") ? "404" : "error";
+
                             if (s.Tags != null)
                                 s.Tags.RemoveWhere(t => String.IsNullOrEmpty(t) || t.Length > 255);
 
@@ -92,15 +88,9 @@ namespace Exceptionless.EventMigration {
                                 s.Title = s.Title.Truncate(1000);
                         });
 
-                        if (validate) {
-                            var invalidStacks = stacks.Where(s => !validator.Validate(s).IsValid).Select(s => new Tuple<OldModels.ErrorStack, IList<ValidationFailure>>(s, validator.Validate(s).Errors));
-                            if (invalidStacks.Any())
-                                Debugger.Break();
-                        }
-
                         Console.SetCursorPosition(0, 4);
                         Console.WriteLine("Migrating stacks {0:N0} total {1:N0}/s...", total, total > 0 ? total / stopwatch.Elapsed.TotalSeconds : 0);
-                        response = searchclient.IndexMany(stacks);
+                        var response = searchclient.IndexMany(stacks, type: "stacks", index: ElasticSearchRepository<Stack>.StacksIndexName);
                         if (!response.IsValid)
                             Debugger.Break();
 
@@ -113,12 +103,22 @@ namespace Exceptionless.EventMigration {
                 total = 0;
                 stopwatch.Reset();
                 if (!ca.SkipErrors) {
-                    var validator = new PersistentEventValidator();
                     stopwatch.Start();
                     var eventUpgraderPluginManager = container.GetInstance<EventUpgraderPluginManager>();
+                    var eventRepository = container.GetInstance<IEventRepository>();
                     var errorCollection = GetErrorCollection(container);
+                    //var json1 = JsonExtensions.ToJson(errorCollection.FindOneById(ObjectId.Parse("80000000e2cc694bd029a952")), Formatting.Indented);
+                    //var json2 = JsonExtensions.ToJson(errorCollection.FindOneById(ObjectId.Parse("80000000e2cc694bd029a953")), Formatting.Indented);
+                    //var ctx2 = new EventUpgraderContext("[" + json1 + "," + json2 + "]", new Version(1, 5), true);
+                    //eventUpgraderPluginManager.Upgrade(ctx2);
+                    //var ev2 = ctx2.Documents.ToObject<List<PersistentEvent>>();
+                    //eventRepository.Add(ev2.First());
+                    //eventRepository.Add(ev2.Last());
                     var query = mostRecentEvent != null && mostRecentEvent.Total > 0 ? Query.GT(ErrorFieldNames.Id, ObjectId.Parse(mostRecentEvent.Hits.First().Id)) : Query.Null;
                     var errors = errorCollection.Find(query).SetSortOrder(SortBy.Ascending(ErrorFieldNames.Id)).SetLimit(BatchSize).ToList();
+                    // TODO: When resuming, we need to get a list of existing stack ids from the events.
+                    var knownStackIds = new List<string>();
+
                     while (errors.Count > 0) {
                         Console.SetCursorPosition(0, 5);
                         Console.WriteLine("Migrating events {0}-{1} {2:N0} total {3:N0}/s...", errors.First().Id, errors.Last().Id, total, total > 0 ? total / stopwatch.Elapsed.TotalSeconds : 0);
@@ -128,24 +128,32 @@ namespace Exceptionless.EventMigration {
                         eventUpgraderPluginManager.Upgrade(ctx);
 
                         var ev = events.FromJson<PersistentEvent>(serializerSettings);
+                        ev.ForEach(e => {
+                            if (e.Date.UtcDateTime > DateTimeOffset.UtcNow.AddHours(1))
+                                e.Date = DateTimeOffset.Now;
 
-                        if (validate) {
-                            var invalidEvents = ev.Where(e => !validator.Validate(e).IsValid).Select(e => new Tuple<PersistentEvent, IList<ValidationFailure>>(e, validator.Validate(e).Errors));
-                            if (invalidEvents.Any())
-                                Debugger.Break();
-                        }
+                            if (e.Type != Event.KnownTypes.Error)
+                                return;
+
+                            if (!knownStackIds.Contains(e.StackId)) {
+                                e.IsFirstOccurrence = true;
+                                knownStackIds.Add(e.StackId);
+                            }
+
+                            var request = e.GetRequestInfo();
+                            if (request != null)
+                                e.AddRequestInfo(request.ApplyDataExclusions(RequestInfoPlugin.DefaultExclusions, RequestInfoPlugin.MAX_VALUE_LENGTH));
+
+                            var stacking = e.GetStackingTarget();
+                            if (stacking != null && stacking.Method != null && !String.IsNullOrEmpty(stacking.Method.GetDeclaringTypeFullName()))
+                                e.Source = stacking.Method.GetDeclaringTypeFullName().Truncate(2000);
+                        });
 
                         try {
-                            foreach (var group in ev.GroupBy(e => e.Date.ToUniversalTime().Date))
-                                response = searchclient.IndexMany(group, type: "events", index: "events_v1_" + group.Key.ToString("yyyyMM"));
-                            if (!response.IsValid)
-                                Debugger.Break();
-                        } catch (OutOfMemoryException) {
-                            response = searchclient.IndexMany(ev.Take(BatchSize / 2));
-                            response = searchclient.IndexMany(ev.Skip(BatchSize / 2));
-                        }
-                        if (!response.IsValid)
+                            eventRepository.Add(ev);
+                        } catch (Exception ex) {
                             Debugger.Break();
+                        }
 
                         var lastId = ev.Last().Id;
                         errors = errorCollection.Find(Query.GT(ErrorFieldNames.Id, ObjectId.Parse(lastId))).SetSortOrder(SortBy.Ascending(ErrorFieldNames.Id)).SetLimit(BatchSize).ToList();
@@ -192,70 +200,6 @@ namespace Exceptionless.EventMigration {
             Console.WriteLine("     - Exceptionless Event Migration -");
             Console.WriteLine();
             Console.WriteLine(Parser.ArgumentsUsage(typeof(ConsoleArguments)));
-        }
-
-        private static ElasticClient GetElasticClient(Uri serverUri, bool deleteExistingIndexes) {
-            var settings = new ConnectionSettings(serverUri).SetDefaultIndex("stacks_v1");
-            settings.SetJsonSerializerSettingsModifier(s => { s.ContractResolver = new EmptyCollectionContractResolver(settings); });
-            settings.MapDefaultTypeNames(m => m.Add(typeof(PersistentEvent), "events").Add(typeof(Stack), "stacks").Add(typeof(OldModels.ErrorStack), "stacks"));
-            settings.SetDefaultPropertyNameInferrer(p => p.ToLowerUnderscoredWords());
-
-            var client = new ElasticClient(settings);
-            ConfigureMapping(client, deleteExistingIndexes);
-
-            return client;
-        }
-
-        private static void ConfigureMapping(ElasticClient searchclient, bool deleteExistingIndexes = false) {
-            if (deleteExistingIndexes)
-                searchclient.DeleteIndex(i => i.AllIndices());
-
-            if (!searchclient.IndexExists(new IndexExistsRequest(new IndexNameMarker { Name = "stacks_v1" })).Exists)
-                searchclient.CreateIndex("stacks_v1", d => d
-                    .AddAlias("stacks")
-                    .AddMapping<Stack>(map => map
-                        .Dynamic(DynamicMappingOption.Ignore)
-                        .IncludeInAll(false)
-                        .Properties(p => p
-                            .String(f => f.Name(s => s.OrganizationId).IndexName("organization").Index(FieldIndexOption.NotAnalyzed))
-                            .String(f => f.Name(s => s.ProjectId).IndexName("project").Index(FieldIndexOption.NotAnalyzed))
-                            .String(f => f.Name(s => s.SignatureHash).IndexName("signature").Index(FieldIndexOption.NotAnalyzed))
-                            .Date(f => f.Name(s => s.FirstOccurrence).IndexName("first"))
-                            .Date(f => f.Name(s => s.LastOccurrence).IndexName("last"))
-                            .String(f => f.Name(s => s.Title).IndexName("title").Index(FieldIndexOption.Analyzed).IncludeInAll().Boost(1.1))
-                            .String(f => f.Name(s => s.Description).IndexName("description").Index(FieldIndexOption.Analyzed).IncludeInAll())
-                            .String(f => f.Name(s => s.Tags).IndexName("tag").Index(FieldIndexOption.NotAnalyzed).IncludeInAll().Boost(1.2))
-                            .String(f => f.Name(s => s.References).IndexName("references").Index(FieldIndexOption.Analyzed).IncludeInAll())
-                            .Date(f => f.Name(s => s.DateFixed).IndexName("fixed"))
-                            .Boolean(f => f.Name(s => s.IsHidden).IndexName("hidden"))
-                            .Boolean(f => f.Name(s => s.IsRegressed).IndexName("regressed"))
-                            .Boolean(f => f.Name(s => s.OccurrencesAreCritical).IndexName("critical"))
-                            .Number(f => f.Name(s => s.TotalOccurrences).IndexName("occurrences"))
-                        )
-                    )
-                );
-
-            searchclient.PutTemplate("events_v1", d => d
-                .Template("events_v1_*")
-                .AddMapping<PersistentEvent>(map => map
-                    .Dynamic(DynamicMappingOption.Ignore)
-                    .IncludeInAll(false)
-                    .Properties(p => p
-                        .String(f => f.Name(e => e.OrganizationId).IndexName("organization").Index(FieldIndexOption.NotAnalyzed))
-                        .String(f => f.Name(e => e.ProjectId).IndexName("project").Index(FieldIndexOption.NotAnalyzed))
-                        .String(f => f.Name(e => e.StackId).IndexName("stack").Index(FieldIndexOption.NotAnalyzed))
-                        .String(f => f.Name(e => e.ReferenceId).IndexName("reference").Index(FieldIndexOption.NotAnalyzed))
-                        .String(f => f.Name(e => e.SessionId).IndexName("session").Index(FieldIndexOption.NotAnalyzed))
-                        .String(f => f.Name(e => e.Type).IndexName("type").Index(FieldIndexOption.NotAnalyzed))
-                        .String(f => f.Name(e => e.Source).IndexName("source").Index(FieldIndexOption.NotAnalyzed).IncludeInAll())
-                        .Date(f => f.Name(e => e.Date).IndexName("date"))
-                        .String(f => f.Name(e => e.Message).IndexName("message").Index(FieldIndexOption.Analyzed).IncludeInAll())
-                        .String(f => f.Name(e => e.Tags).IndexName("tag").Index(FieldIndexOption.NotAnalyzed).IncludeInAll().Boost(1.1))
-                        .Boolean(f => f.Name(e => e.IsFixed).IndexName("fixed"))
-                        .Boolean(f => f.Name(e => e.IsHidden).IndexName("hidden"))
-                    )
-                )
-            );
         }
 
         #region Legacy mongo collections

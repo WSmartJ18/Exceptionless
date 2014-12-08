@@ -18,6 +18,7 @@ namespace Exceptionless.Models {
         public Stack() {
             Tags = new TagSet();
             References = new Collection<string>();
+            SignatureInfo = new SettingsDictionary();
         }
 
         /// <summary>
@@ -34,6 +35,11 @@ namespace Exceptionless.Models {
         /// The project that the stack belongs to.
         /// </summary>
         public string ProjectId { get; set; }
+
+        /// <summary>
+        /// The stack type (ie. error, log message, feature usage). Check <see cref="KnownTypes">Stack.KnownTypes</see> for standard stack types.
+        /// </summary>
+        public string Type { get; set; }
 
         /// <summary>
         /// The signature used for stacking future occurrences.
@@ -109,5 +115,14 @@ namespace Exceptionless.Models {
         /// A list of tags used to categorize this stack.
         /// </summary>
         public TagSet Tags { get; set; }
+
+        public static class KnownTypes {
+            public const string Error = "error";
+            public const string NotFound = "404";
+            public const string Log = "log";
+            public const string FeatureUsage = "usage";
+            public const string SessionStart = "start";
+            public const string SessionEnd = "end";
+        }
     }
 }

@@ -94,6 +94,13 @@ namespace Exceptionless.Core.Repositories {
             return options;
         }
 
+        public static T WithDateRange<T>(this T options, DateTime? start, DateTime? end, string field) where T : MultiOptions {
+            options.StartDate = start;
+            options.EndDate = end;
+            options.DateField = field;
+            return options;
+        }
+
         public static T WithFields<T>(this T options, params string[] fields) where T : OneOptions {
             options.Fields.AddRange(fields);
             return options;
@@ -108,8 +115,6 @@ namespace Exceptionless.Core.Repositories {
             if (paging == null)
                 return options;
 
-            options.BeforeValue = paging.Before;
-            options.AfterValue = paging.After;
             options.Page = paging.Page;
             options.Limit = paging.Limit;
 

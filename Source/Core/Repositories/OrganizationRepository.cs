@@ -13,13 +13,13 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using CodeSmith.Core.Extensions;
 using Exceptionless.Core.Billing;
 using Exceptionless.Core.Caching;
 using Exceptionless.Core.Extensions;
 using Exceptionless.Core.Messaging;
 using Exceptionless.Core.Messaging.Models;
 using Exceptionless.Core.Models.Billing;
+using Exceptionless.DateTimeExtensions;
 using Exceptionless.Extensions;
 using Exceptionless.Models;
 using FluentValidation;
@@ -76,7 +76,7 @@ namespace Exceptionless.Core.Repositories {
             var update = new UpdateBuilder();
             if (eventCount < 0)
                 return;
-
+            
             update.Inc(FieldNames.TotalEventCount, eventCount);
             update.Set(FieldNames.LastEventDate, new BsonDateTime(DateTime.UtcNow));
 
@@ -222,9 +222,9 @@ namespace Exceptionless.Core.Repositories {
             bool justWentOverMonthly = monthlyTotal > org.MaxEventsPerMonth && monthlyTotal <= org.MaxEventsPerMonth + count;
 
             if (justWentOverMonthly)
-                PublishMessageAsync(new PlanOverage { OrganizationId = org.Id });
+                PublishMessage(new PlanOverage { OrganizationId = org.Id });
             else if (justWentOverHourly)
-                PublishMessageAsync(new PlanOverage { OrganizationId = org.Id, IsHourly = true });
+                PublishMessage(new PlanOverage { OrganizationId = org.Id, IsHourly = true });
 
             bool shouldSaveUsage = false;
             var lastCounterSavedDate = Cache.Get<DateTime?>(GetUsageSavedCacheKey(organizationId));

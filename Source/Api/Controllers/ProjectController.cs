@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Net;
 using System.Threading.Tasks;
 using System.Web.Http;
 using AutoMapper;
+using Exceptionless.Api.Extensions;
 using Exceptionless.Api.Models;
 using Exceptionless.Core.Authorization;
 using Exceptionless.Core.Billing;
@@ -32,15 +32,17 @@ namespace Exceptionless.Api.Controllers {
 
         [HttpGet]
         [Route]
-        public IHttpActionResult Get(string before = null, string after = null, int limit = 10) {
-            var options = new PagingOptions { Before = before, After = after, Limit = limit };
+        public IHttpActionResult Get(int page = 1, int limit = 10) {
+            page = GetPage(page);
+            limit = GetLimit(limit);
+            var options = new PagingOptions { Page = page, Limit = limit };
             var results = _repository.GetByOrganizationIds(GetAssociatedOrganizationIds(), options).Select(Mapper.Map<Project, ViewProject>).ToList();
-            return OkWithResourceLinks(results, options.HasMore, e => e.Id);
+            return OkWithResourceLinks(results, options.HasMore, page);
         }
 
         [HttpGet]
-        [Route("~/" + API_PREFIX + "/organizations/{organizationId:objectid}/projects")]
-        public IHttpActionResult GetByOrganization(string organization, string before = null, string after = null, int limit = 10) {
+        [Route("~/" + API_PREFIX + "/organizations/{organization:objectid}/projects")]
+        public IHttpActionResult GetByOrganization(string organization, int page = 1, int limit = 10) {
             if (!String.IsNullOrEmpty(organization) && !CanAccessOrganization(organization))
                 return NotFound();
 
@@ -50,9 +52,11 @@ namespace Exceptionless.Api.Controllers {
             else
                 organizationIds.AddRange(GetAssociatedOrganizationIds());
 
-            var options = new PagingOptions { Before = before, After = after, Limit = limit };
+            page = GetPage(page);
+            limit = GetLimit(limit);
+            var options = new PagingOptions { Page = page, Limit = limit };
             var results = _repository.GetByOrganizationIds(organizationIds, options).Select(Mapper.Map<Project, ViewProject>).ToList();
-            return OkWithResourceLinks(results, options.HasMore, e => e.Id);
+            return OkWithResourceLinks(results, options.HasMore && !NextPageExceedsSkipLimit(page, limit), page);
         }
 
         [HttpGet]
@@ -75,9 +79,9 @@ namespace Exceptionless.Api.Controllers {
         }
 
         [HttpDelete]
-        [Route("{id:objectid}")]
-        public override IHttpActionResult Delete(string id) {
-            return base.Delete(id);
+        [Route("{ids:objectids}")]
+        public override IHttpActionResult Delete([CommaDelimitedArray]string[] ids) {
+            return base.Delete(ids);
         }
 
         #endregion
@@ -101,9 +105,12 @@ namespace Exceptionless.Api.Controllers {
 
         [HttpPost]
         [Route("{id:objectid}/config/{key:minlength(1)}")]
-        public IHttpActionResult SetConfig(string id, string key, string value) {
+        public IHttpActionResult SetConfig(string id, string key, [NakedBody] string value) {
             var project = GetModel(id, false);
             if (project == null)
+                return NotFound();
+
+            if (String.IsNullOrWhiteSpace(value))
                 return BadRequest();
 
             project.Configuration.Settings[key] = value;
@@ -118,7 +125,7 @@ namespace Exceptionless.Api.Controllers {
         public IHttpActionResult DeleteConfig(string id, string key) {
             var project = GetModel(id, false);
             if (project == null)
-                return BadRequest();
+                return NotFound();
 
             if (project.Configuration.Settings.Remove(key))
                 _repository.Save(project);
@@ -131,7 +138,7 @@ namespace Exceptionless.Api.Controllers {
         public async Task<IHttpActionResult> ResetDataAsync(string id) {
             var project = GetModel(id);
             if (project == null)
-                return BadRequest();
+                return NotFound();
 
             // TODO: Implement a long running process queue where a task can be inserted and then monitor for progress.
             await _dataHelper.ResetProjectDataAsync(id);
@@ -141,6 +148,7 @@ namespace Exceptionless.Api.Controllers {
 
         [HttpGet]
         [Route("{id:objectid}/notifications")]
+        [Authorize(Roles = AuthorizationRoles.GlobalAdmin)]
         public IHttpActionResult GetNotificationSettings(string id) {
             var project = GetModel(id);
             if (project == null)
@@ -149,7 +157,6 @@ namespace Exceptionless.Api.Controllers {
             return Ok(project.NotificationSettings);
         }
 
-        // TODO: Should we remove userId and just use the current user..
         [HttpGet]
         [Route("{id:objectid}/notifications/{userId:objectid}")]
         public IHttpActionResult GetNotificationSettings(string id, string userId) {
@@ -157,14 +164,13 @@ namespace Exceptionless.Api.Controllers {
             if (project == null)
                 return NotFound();
 
-            if (!project.NotificationSettings.ContainsKey(userId))
+            if (!Request.IsGlobalAdmin() && !String.Equals(ExceptionlessUser.Id, userId))
                 return NotFound();
 
-            // TODO: We should just return the settings instead of user id and settings.
-            return Ok(project.NotificationSettings[userId]);
+            NotificationSettings settings;
+            return Ok(project.NotificationSettings.TryGetValue(userId, out settings) ? settings : new NotificationSettings());
         }
 
-        // TODO: Should we remove userId and just use the current user..
         [HttpPut]
         [HttpPost]
         [Route("{id:objectid}/notifications/{userId:objectid}")]
@@ -173,7 +179,14 @@ namespace Exceptionless.Api.Controllers {
             if (project == null)
                 return NotFound();
 
-            project.NotificationSettings[userId] = settings;
+            if (!Request.IsGlobalAdmin() && !String.Equals(ExceptionlessUser.Id, userId))
+                return NotFound();
+
+            if (settings == null)
+                project.NotificationSettings.Remove(userId);
+            else
+                project.NotificationSettings[userId] = settings;
+
             _repository.Save(project);
 
             return Ok();
@@ -184,6 +197,9 @@ namespace Exceptionless.Api.Controllers {
         public IHttpActionResult DeleteNotificationSettings(string id, string userId) {
             var project = GetModel(id, false);
             if (project == null)
+                return NotFound();
+
+            if (!Request.IsGlobalAdmin() && !String.Equals(ExceptionlessUser.Id, userId))
                 return NotFound();
 
             if (project.NotificationSettings.ContainsKey(userId)) {
@@ -228,13 +244,14 @@ namespace Exceptionless.Api.Controllers {
         [HttpGet]
         [Route("check-name/{name:minlength(1)}")]
         public IHttpActionResult IsNameAvailable(string name) {
-            if (String.IsNullOrWhiteSpace(name))
+            if (IsNameAvailableInternal(name))
                 return NotFound();
 
-            if (_repository.GetByOrganizationIds(GetAssociatedOrganizationIds()).Any(o => o.Name.Trim().Equals(name.Trim(), StringComparison.OrdinalIgnoreCase)))
-                return Ok();
+            return Ok();
+        }
 
-            return NotFound();
+        private bool IsNameAvailableInternal(string name) {
+            return !String.IsNullOrWhiteSpace(name) && _repository.GetByIds(GetAssociatedOrganizationIds()).Any(o => o.Name.Trim().Equals(name.Trim(), StringComparison.OrdinalIgnoreCase));
         }
 
         [HttpPost]
@@ -242,7 +259,7 @@ namespace Exceptionless.Api.Controllers {
         public IHttpActionResult PostData(string id, string key, string value) {
             var project = GetModel(id, false);
             if (project == null)
-                return BadRequest();
+                return NotFound();
 
             project.Data[key] = value;
             _repository.Save(project);
@@ -255,7 +272,7 @@ namespace Exceptionless.Api.Controllers {
         public IHttpActionResult DeleteData(string id, string key) {
             var project = GetModel(id, false);
             if (project == null)
-                return BadRequest();
+                return NotFound();
 
             if (project.Data.Remove(key))
                 _repository.Save(project);
@@ -265,7 +282,6 @@ namespace Exceptionless.Api.Controllers {
 
         protected override void CreateMaps() {
             Mapper.CreateMap<Project, ViewProject>().AfterMap((p, pi) => {
-                pi.TimeZoneOffset = p.DefaultTimeZoneOffset().TotalMilliseconds;
                 pi.OrganizationName = _organizationRepository.GetById(p.OrganizationId, true).Name;
             });
             base.CreateMaps();
@@ -273,22 +289,31 @@ namespace Exceptionless.Api.Controllers {
 
         protected override PermissionResult CanAdd(Project value) {
             if (String.IsNullOrEmpty(value.Name))
-                return PermissionResult.DenyWithResult(BadRequest("Project name is required."));
+                return PermissionResult.DenyWithMessage("Project name is required.");
+
+            if (!IsNameAvailableInternal(value.Name))
+                return PermissionResult.DenyWithMessage("A project with this name already exists.");
 
             if (!_billingManager.CanAddProject(value))
-                return PermissionResult.DenyWithResult(PlanLimitReached("Please upgrade your plan to add additional projects."));
+                return PermissionResult.DenyWithPlanLimitReached("Please upgrade your plan to add additional projects.");
 
             return base.CanAdd(value);
         }
 
         protected override Project AddModel(Project value) {
-            if (String.IsNullOrWhiteSpace(value.TimeZone))
-                value.TimeZone = TimeZone.CurrentTimeZone.IsDaylightSavingTime(DateTime.Now) ? TimeZone.CurrentTimeZone.DaylightName : TimeZone.CurrentTimeZone.StandardName;
-
-            value.NextSummaryEndOfDayTicks = TimeZoneInfo.ConvertTime(DateTime.Today.AddDays(1), value.DefaultTimeZone()).ToUniversalTime().Ticks;
+            value.NextSummaryEndOfDayTicks = DateTime.UtcNow.Date.AddDays(1).AddHours(1).Ticks;
+            value.AddDefaultOwnerNotificationSettings(ExceptionlessUser.Id);
             var project = base.AddModel(value);
 
             return project;
+        }
+
+        protected override PermissionResult CanUpdate(Project original, Delta<UpdateProject> changes) {
+            var changed = changes.GetEntity();
+            if (changes.ContainsChangedProperty(p => p.Name) && !IsNameAvailableInternal(changed.Name))
+                return PermissionResult.DenyWithPlanLimitReached("A project with this name already exists.");
+
+            return base.CanUpdate(original, changes);
         }
     }
 }

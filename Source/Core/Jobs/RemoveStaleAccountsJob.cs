@@ -12,46 +12,37 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using CodeSmith.Core.Scheduler;
+using Exceptionless.Core.Lock;
 using Exceptionless.Core.Repositories;
 using Exceptionless.Models;
 using NLog.Fluent;
 
 namespace Exceptionless.Core.Jobs {
-    public class RemoveStaleAccountsJob : Job {
+    public class RemoveStaleAccountsJob : JobBase {
         private readonly IOrganizationRepository _organizationRepository;
         private readonly IProjectRepository _projectRepository;
         private readonly IUserRepository _userRepository;
         private readonly IEventRepository _eventRepository;
         private readonly IStackRepository _stackRepository;
-        private readonly IDayStackStatsRepository _dayStackStats;
-        private readonly IMonthStackStatsRepository _monthStackStats;
-        private readonly IDayProjectStatsRepository _dayProjectStats;
-        private readonly IMonthProjectStatsRepository _monthProjectStats;
 
         public RemoveStaleAccountsJob(OrganizationRepository organizationRepository,
             IProjectRepository projectRepository,
             IUserRepository userRepository,
             IEventRepository eventRepository,
             IStackRepository stackRepository,
-            IDayStackStatsRepository dayStackStats,
-            IMonthStackStatsRepository monthStackStats,
-            IDayProjectStatsRepository dayProjectStats,
-            IMonthProjectStatsRepository monthProjectStats)
+            ILockProvider lockProvider)
         {
             _organizationRepository = organizationRepository;
             _projectRepository = projectRepository;
             _userRepository = userRepository;
             _eventRepository = eventRepository;
             _stackRepository = stackRepository;
-            _dayStackStats = dayStackStats;
-            _monthStackStats = monthStackStats;
-            _dayProjectStats = dayProjectStats;
-            _monthProjectStats = monthProjectStats;
+            LockProvider = lockProvider;
         }
 
-        public override Task<JobResult> RunAsync(JobRunContext context) {
+        protected override Task<JobResult> RunInternalAsync(CancellationToken token) {
             Log.Info().Message("Remove stale accounts job starting").Write();
 
             var organizations = _organizationRepository.GetAbandoned();
@@ -74,15 +65,11 @@ namespace Exceptionless.Core.Jobs {
                     return;
                 }
 
-                foreach (Project project in projects) {
-                    Log.Info().Message("Resetting all project data for project '{0}' with Id: '{1}'.", project.Name, project.Id).Write();
-                    _stackRepository.RemoveAllByProjectIdAsync(project.Id).Wait();
-                    _eventRepository.RemoveAllByProjectIdAsync(project.Id).Wait();
-                    _dayStackStats.RemoveAllByProjectIdAsync(project.Id).Wait();
-                    _monthStackStats.RemoveAllByProjectIdAsync(project.Id).Wait();
-                    _dayProjectStats.RemoveAllByProjectIdAsync(project.Id).Wait();
-                    _monthProjectStats.RemoveAllByProjectIdAsync(project.Id).Wait();
-                }
+                Log.Info().Message("Deleting all events for organization '{0}' with Id: '{1}'.", organization.Name, organization.Id).Write();
+                _eventRepository.RemoveAllByProjectIdsAsync(projects.Select(p => p.Id).ToArray()).Wait();
+
+                Log.Info().Message("Deleting all stacks for organization '{0}' with Id: '{1}'.", organization.Name, organization.Id).Write();
+                _stackRepository.RemoveAllByProjectIdsAsync(projects.Select(p => p.Id).ToArray()).Wait();
 
                 Log.Info().Message("Deleting all projects for organization '{0}' with Id: '{1}'.", organization.Name, organization.Id).Write();
                 _projectRepository.Remove(projects);

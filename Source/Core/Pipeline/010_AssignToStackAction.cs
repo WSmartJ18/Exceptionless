@@ -24,11 +24,11 @@ namespace Exceptionless.Core.Pipeline {
     [Priority(10)]
     public class AssignToStackAction : EventPipelineActionBase {
         private readonly IStackRepository _stackRepository;
-        private readonly FormattingPluginManager _pluginManager;
+        private readonly FormattingPluginManager _formattingPluginManager;
 
-        public AssignToStackAction(IStackRepository stackRepository, FormattingPluginManager pluginManager) {
+        public AssignToStackAction(IStackRepository stackRepository, FormattingPluginManager formattingPluginManager) {
             _stackRepository = stackRepository;
-            _pluginManager = pluginManager;
+            _formattingPluginManager = formattingPluginManager;
         }
 
         protected override bool IsCritical { get { return true; } }
@@ -48,12 +48,13 @@ namespace Exceptionless.Core.Pipeline {
                 string signatureHash = ctx.StackSignatureData.Values.Any(v => v != null) ? ctx.StackSignatureData.Values.ToSHA1() : null;
                 ctx.SetProperty("__SignatureHash", signatureHash);
 
-                ctx.StackInfo = _stackRepository.GetStackInfoBySignatureHash(ctx.Event.ProjectId, signatureHash);
-                if (ctx.StackInfo == null) {
+                ctx.Stack = _stackRepository.GetStackBySignatureHash(ctx.Event.ProjectId, signatureHash);
+                if (ctx.Stack == null) {
                     Log.Trace().Message("Creating new error stack.").Write();
                     ctx.IsNew = true;
+                    ctx.Event.IsFirstOccurrence = true;
 
-                    string title = _pluginManager.GetStackTitle(ctx.Event);
+                    string title = _formattingPluginManager.GetStackTitle(ctx.Event);
                     var stack = new Stack {
                         OrganizationId = ctx.Event.OrganizationId,
                         ProjectId = ctx.Event.ProjectId,
@@ -61,58 +62,40 @@ namespace Exceptionless.Core.Pipeline {
                         SignatureHash = signatureHash,
                         Title = title != null ? title.Truncate(1000) : null,
                         Tags = ctx.Event.Tags ?? new TagSet(),
+                        Type = ctx.Event.Type,
                         TotalOccurrences = 1,
                         FirstOccurrence = ctx.Event.Date.UtcDateTime,
                         LastOccurrence = ctx.Event.Date.UtcDateTime
                     };
 
                     ctx.Stack = _stackRepository.Add(stack, true);
-                    ctx.StackInfo = new StackInfo {
-                        Id = stack.Id,
-                        DateFixed = stack.DateFixed,
-                        OccurrencesAreCritical = stack.OccurrencesAreCritical
-                    };
-
-                    // new 404 stack id added, invalidate 404 id cache
-                    if (ctx.Event.IsNotFound())
-                        _stackRepository.InvalidateNotFoundIdsCache(ctx.Event.ProjectId);
                 }
 
-                Log.Trace().Message("Updating error's ErrorStackId to: {0}", ctx.StackInfo.Id).Write();
-                ctx.Event.StackId = ctx.StackInfo.Id;
+                Log.Trace().Message("Updating error's StackId to: {0}", ctx.Stack.Id).Write();
+                ctx.Event.StackId = ctx.Stack.Id;
             } else {
-                ctx.Stack = _stackRepository.GetById(ctx.Event.StackId);
+                ctx.Stack = _stackRepository.GetById(ctx.Event.StackId, true);
 
-                // TODO: Update unit tests to work with this check.
-                //if (stack == null || stack.ProjectId != error.ProjectId)
-                //    throw new InvalidOperationException("Invalid ErrorStackId.");
-                if (ctx.Stack == null)
-                    return;
+                if (ctx.Stack == null || ctx.Stack.ProjectId != ctx.Event.ProjectId)
+                    throw new ApplicationException("Invalid StackId.");
 
                 ctx.SetProperty("__SignatureHash", ctx.Stack.SignatureHash);
+            }
 
-                if (ctx.Event.Tags != null && ctx.Event.Tags.Count > 0) {
-                    if (ctx.Stack.Tags == null)
-                        ctx.Stack.Tags = new TagSet();
+            if (!ctx.IsNew && ctx.Event.Tags != null && ctx.Event.Tags.Count > 0) {
+                if (ctx.Stack.Tags == null)
+                    ctx.Stack.Tags = new TagSet();
 
-                    List<string> newTags = ctx.Event.Tags.Where(t => !ctx.Stack.Tags.Contains(t)).ToList();
-                    if (newTags.Count > 0) {
-                        ctx.Stack.Tags.AddRange(newTags);
-                        _stackRepository.Save(ctx.Stack);
-                    }
+                List<string> newTags = ctx.Event.Tags.Where(t => !ctx.Stack.Tags.Contains(t)).ToList();
+                if (newTags.Count > 0) {
+                    ctx.Stack.Tags.AddRange(newTags);
+                    _stackRepository.Save(ctx.Stack, true);
                 }
-
-                ctx.StackInfo = new StackInfo {
-                    Id = ctx.Stack.Id,
-                    DateFixed = ctx.Stack.DateFixed,
-                    OccurrencesAreCritical = ctx.Stack.OccurrencesAreCritical,
-                    IsHidden = ctx.Stack.IsHidden,
-                };
             }
 
             // sync the fixed and hidden flags to the error occurrence
-            ctx.Event.IsFixed = ctx.StackInfo.DateFixed.HasValue;
-            ctx.Event.IsHidden = ctx.StackInfo.IsHidden;
+            ctx.Event.IsFixed = ctx.Stack.DateFixed.HasValue;
+            ctx.Event.IsHidden = ctx.Stack.IsHidden;
         }
     }
 }

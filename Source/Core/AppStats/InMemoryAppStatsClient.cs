@@ -21,7 +21,7 @@ namespace Exceptionless.Core.AppStats {
         private readonly ConcurrentDictionary<string, long> _counters = new ConcurrentDictionary<string, long>();
         private readonly ConcurrentDictionary<string, Stack<double>> _gauges = new ConcurrentDictionary<string, Stack<double>>();
         private readonly ConcurrentDictionary<string, Stack<long>> _timings = new ConcurrentDictionary<string, Stack<long>>();
-        private readonly ConcurrentDictionary<string, EventWaitHandle> _counterEvents = new ConcurrentDictionary<string, EventWaitHandle>();
+        private readonly ConcurrentDictionary<string, AutoResetEvent> _counterEvents = new ConcurrentDictionary<string, AutoResetEvent>();
         private Timer _statsDisplayTimer;
 
         public InMemoryAppStatsClient() {
@@ -29,16 +29,20 @@ namespace Exceptionless.Core.AppStats {
         }
 
         private void OnDisplayStats(object state) {
-            foreach (var key in _counters.Keys)
+            DisplayStats();
+        }
+
+        public void DisplayStats() {
+            foreach (var key in _counters.Keys.ToList())
                 Debug.WriteLine("Counter: {0} Value: {1}", key, _counters[key]);
 
-            foreach (var key in _gauges.Keys) {
+            foreach (var key in _gauges.Keys.ToList()) {
                 Debug.WriteLine("Gauge: {0} Value: {1}", key, _gauges[key].Peek());
                 Debug.WriteLine("Gauge: {0} Avg Value: {1}", key, _gauges[key].Average());
                 Debug.WriteLine("Gauge: {0} Max Value: {1}", key, _gauges[key].Max());
             }
 
-            foreach (var key in _timings.Keys)
+            foreach (var key in _timings.Keys.ToList())
                 Debug.WriteLine("Timing: {0} Avg Value: {1}", key, _timings[key].Average());
             
             if (_counters.Count > 0 || _gauges.Count > 0 || _timings.Count > 0)
@@ -47,21 +51,34 @@ namespace Exceptionless.Core.AppStats {
 
         public void Counter(string statName, int value = 1) {
             _counters.AddOrUpdate(statName, value, (key, current) => current + value);
-            EventWaitHandle waitHandle;
+            AutoResetEvent waitHandle;
             _counterEvents.TryGetValue(statName, out waitHandle);
             if (waitHandle != null)
                 waitHandle.Set();
         }
 
-        public void WaitForCounter(string statName, int count = 1) {
+        public bool WaitForCounter(string statName, long count = 1, double timeoutInSeconds = 10, Action work = null) {
             if (count == 0)
-                return;
+                return true;
+
+            long currentCount = GetCount(statName);
+            if (work != null)
+                work();
+
+            count = count - (GetCount(statName) - currentCount);
+
+            if (count == 0)
+                return true;
 
             var waitHandle = _counterEvents.GetOrAdd(statName, s => new AutoResetEvent(false));
             do {
-                waitHandle.WaitOne(TimeSpan.FromSeconds(10));
+                if (!waitHandle.WaitOne(TimeSpan.FromSeconds(timeoutInSeconds)))
+                    return false;
+
                 count--;
             } while (count > 0);
+
+            return true;
         }
 
         public void Gauge(string statName, double value) {

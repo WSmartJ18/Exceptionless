@@ -1,9 +1,9 @@
 ﻿using System;
 using System.Threading.Tasks;
 using CodeSmith.Core.Component;
-using CodeSmith.Core.Extensions;
 using Exceptionless.Core.Caching;
 using Exceptionless.Core.Repositories;
+using Exceptionless.DateTimeExtensions;
 using NLog.Fluent;
 
 namespace Exceptionless.Core.Plugins.EventProcessor {
@@ -48,7 +48,7 @@ namespace Exceptionless.Core.Plugins.EventProcessor {
 
             Log.Info().Message("Bot throttle triggered. IP: {0} Time: {1} Project: {2}", ri.ClientIpAddress, DateTime.Now.Floor(_throttlingPeriod), context.Event.ProjectId).Project(context.Event.ProjectId).Write();
             // the throttle was triggered, go and delete all the errors that triggered the throttle to reduce bot noise in the system
-            Task.Run(() => _eventRepository.RemoveAllByClientIpAndDateAsync(ri.ClientIpAddress, DateTime.Now.Floor(_throttlingPeriod), DateTime.Now.Ceiling(_throttlingPeriod)));
+            Task.Run(() => _eventRepository.HideAllByClientIpAndDateAsync(context.Event.OrganizationId, ri.ClientIpAddress, DateTime.Now.Floor(_throttlingPeriod), DateTime.Now.Ceiling(_throttlingPeriod)));
             context.IsCancelled = true;
         }
     }

@@ -11,17 +11,26 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
+using AutoMapper;
 using Exceptionless.Core.Caching;
+using Exceptionless.Core.Extensions;
 using Exceptionless.Models;
+using MongoDB.Bson;
 using Nest;
+using NLog.Fluent;
 
 namespace Exceptionless.Core.Repositories {
     public abstract class ElasticSearchReadOnlyRepository<T> : IReadOnlyRepository<T> where T : class, IIdentity, new() {
-        protected readonly ElasticClient _elasticClient;
-        private SearchDescriptor<T> _searchDescriptor;
+        private static readonly DateTime MIN_OBJECTID_DATE = new DateTime(2000, 1, 1);
+        protected readonly IElasticClient _elasticClient;
+        protected static readonly bool _isEvent = typeof(T) == typeof(PersistentEvent);
+        protected static readonly bool _isStack = typeof(T) == typeof(Stack);
+        public static string EventsIndexName = "events-v1";
+        public static string StacksIndexName = "stacks-v1";
 
-        protected ElasticSearchReadOnlyRepository(ElasticClient elasticClient, ICacheClient cacheClient = null) {
+        protected ElasticSearchReadOnlyRepository(IElasticClient elasticClient, ICacheClient cacheClient = null) {
             _elasticClient = elasticClient;
             Cache = cacheClient;
         }
@@ -50,7 +59,11 @@ namespace Exceptionless.Core.Repositories {
             return String.Concat(GetTypeName(), "-", cacheKey);
         }
 
-        protected TModel FindOne<TModel>(OneOptions options) where TModel : class, new() {
+        protected T FindOne(OneOptions options) {
+            return FindOneAs<T>(options);
+        }
+
+        protected TModel FindOneAs<TModel>(OneOptions options) where TModel : class, new() {
             if (options == null)
                 throw new ArgumentNullException("options");
 
@@ -58,19 +71,36 @@ namespace Exceptionless.Core.Repositories {
             if (options.UseCache)
                 result = Cache.Get<TModel>(GetScopedCacheKey(options.CacheKey));
 
+            if (options.UseCache && result != null)
+                Log.Info().Message("Cache hit: type={1}", typeof(T).Name);
+            else if (options.UseCache)
+                Log.Info().Message("Cache miss: type={1}", typeof(T).Name);
+
             if (result != null)
                 return result;
 
-            var searchDescriptor = new SearchDescriptor<TModel>().Query(options.GetElasticSearchQuery<T>()).Take(1);
+            var searchDescriptor = new SearchDescriptor<T>().Filter(options.GetElasticSearchFilter<T>()).Size(1);
             if (options.Fields.Count > 0)
                 searchDescriptor.Source(s => s.Include(options.Fields.ToArray()));
 
-            var elasticSearchOptions = options as ElasticSearchOptions<TModel>;
-            if (elasticSearchOptions != null && elasticSearchOptions.SortBy.Count > 0)
+            var elasticSearchOptions = options as ElasticSearchOptions<T>;
+            if (elasticSearchOptions != null && elasticSearchOptions.SortBy.Count > 0) {
+                searchDescriptor.Indices(elasticSearchOptions.Indices);
                 foreach (var sort in elasticSearchOptions.SortBy)
                     searchDescriptor.Sort(sort);
-           
-            result = _elasticClient.Search<TModel>(searchDescriptor).Documents.FirstOrDefault();
+            }
+
+            var item = _elasticClient.Search<T>(searchDescriptor).Documents.FirstOrDefault();
+
+            if (typeof(T) != typeof(TModel)) {
+                if (Mapper.FindTypeMapFor<T, TModel>() == null)
+                    Mapper.CreateMap<T, TModel>();
+
+                result = Mapper.Map<T, TModel>(item);
+            } else {
+                result = item as TModel;
+            }
+
             if (result != null && options.UseCache)
                 Cache.Set(GetScopedCacheKey(options.CacheKey), result, options.GetCacheExpirationDate());
 
@@ -81,18 +111,24 @@ namespace Exceptionless.Core.Repositories {
             if (options == null)
                 throw new ArgumentNullException("options");
 
-            // TODO: See if take 0 works and if I just need to set it to one with the field of CommonFieldNames.Id
-            var searchDescriptor = new SearchDescriptor<T>().Query(options.GetElasticSearchQuery<T>()).Take(0);
+            options.Fields.Add("id");
+            var searchDescriptor = new SearchDescriptor<T>().Filter(options.GetElasticSearchFilter<T>()).Size(1);
 
             var elasticSearchOptions = options as ElasticSearchOptions<T>;
-            if (elasticSearchOptions != null && elasticSearchOptions.SortBy.Count > 0)
+            if (elasticSearchOptions != null && elasticSearchOptions.SortBy.Count > 0) {
+                searchDescriptor.Indices(elasticSearchOptions.Indices);
                 foreach (var sort in elasticSearchOptions.SortBy)
                     searchDescriptor.Sort(sort);
+            }
 
             return _elasticClient.Search<T>(searchDescriptor).HitsMetaData.Total > 0;
         }
 
-        protected ICollection<TModel> Find<TModel>(ElasticSearchOptions<TModel> options) where TModel : class, new() {
+        protected ICollection<T> Find(ElasticSearchOptions<T> options) {
+            return FindAs<T>(options);
+        }
+
+        protected ICollection<TModel> FindAs<TModel>(ElasticSearchOptions<T> options) where TModel : class, new() {
             if (options == null)
                 throw new ArgumentNullException("options");
 
@@ -103,20 +139,40 @@ namespace Exceptionless.Core.Repositories {
             if (result != null)
                 return result;
 
-            var searchDescriptor = new SearchDescriptor<TModel>().Query(options.GetElasticSearchQuery<TModel>());
+            var searchDescriptor = new SearchDescriptor<T>().Filter(options.GetElasticSearchFilter());
+            searchDescriptor.Indices(options.Indices);
+            searchDescriptor.IgnoreUnavailable();
+
             if (options.UsePaging)
                 searchDescriptor.Skip(options.GetSkip());
             searchDescriptor.Size(options.GetLimit());
+            searchDescriptor.Type(typeof(T));
             if (options.Fields.Count > 0)
                 searchDescriptor.Source(s => s.Include(options.Fields.ToArray()));
             if (options.SortBy.Count > 0)
                 foreach (var sort in options.SortBy)
                     searchDescriptor.Sort(sort);
 
-            var results = _elasticClient.Search<TModel>(searchDescriptor);
-            options.HasMore = options.UseLimit && results.HitsMetaData.Total > options.GetLimit();
+            _elasticClient.EnableTrace();
+            var results = _elasticClient.Search<T>(searchDescriptor);
+            _elasticClient.DisableTrace();
+            if (!results.IsValid)
+                throw new ApplicationException("Error occurred processing request.");
 
-            result = results.Documents.ToList();
+            Debug.WriteLine("Results: " + results.Total);
+            options.HasMore = options.UseLimit && results.Total > options.GetLimit();
+
+            var items = results.Documents.ToList();
+
+            if (typeof(T) != typeof(TModel)) {
+                if (Mapper.FindTypeMapFor<T, TModel>() == null)
+                    Mapper.CreateMap<T, TModel>();
+
+                result = items.Select(Mapper.Map<T, TModel>).ToList();
+            } else {
+                result = items as List<TModel>;
+            }
+
             if (options.UseCache)
                 Cache.Set(GetScopedCacheKey(options.CacheKey), result, options.GetCacheExpirationDate());
 
@@ -124,52 +180,84 @@ namespace Exceptionless.Core.Repositories {
         }
 
         public long Count() {
-            return _elasticClient.Count(c => c.Query(q => q.MatchAll())).Count;
+            return _elasticClient.Count<T>(c => c.Query(q => q.MatchAll())).Count;
         }
 
         public T GetById(string id, bool useCache = false, TimeSpan? expiresIn = null) {
             if (String.IsNullOrEmpty(id))
                 return null;
 
+            // try using the object id to figure out what index the entity is located in
+            string index = GetIndexName(id);
             T result = null;
-            if (useCache)
-                result = Cache.Get<T>(GetScopedCacheKey(id));
+            if (index != null) {
+                result = _elasticClient.Get<T>(id, index).Source;
+                if (result != null && useCache)
+                    Cache.Set(GetScopedCacheKey(id), result, expiresIn != null ? expiresIn.Value : TimeSpan.FromSeconds(RepositoryConstants.DEFAULT_CACHE_EXPIRATION_SECONDS));
+            }
 
-            if (result != null)
-                return result;
+            // fallback to doing a find
+            if (result == null)
+                result = FindOne(new OneOptions().WithId(id).WithCacheKey(useCache ? id : null).WithExpiresIn(expiresIn));
 
-            var response = _elasticClient.Get<T>(id);
-            if (!response.Found || response.Source == null)
-                return null;
-
-            if (useCache)
-                Cache.Set(GetScopedCacheKey(id), response.Source, expiresIn.HasValue ? DateTime.Now.Add(expiresIn.Value) : DateTime.Now.AddSeconds(RepositoryConstants.DEFAULT_CACHE_EXPIRATION_SECONDS));
-
-            return response.Source;
+            return result;
         }
 
         public ICollection<T> GetByIds(ICollection<string> ids, PagingOptions paging = null, bool useCache = false, TimeSpan? expiresIn = null) {
             if (ids == null || ids.Count == 0)
                 return new List<T>();
 
-
-            string cacheKey = String.Join("", ids).GetHashCode().ToString();
-
-            ICollection<T> results = null;
+            var results = new List<T>();
             if (useCache)
-                results = Cache.Get<ICollection<T>>(GetScopedCacheKey(cacheKey));
+                results.AddRange(ids.Select(id => Cache.Get<T>(GetScopedCacheKey(id))).Where(cacheHit => cacheHit != null));
 
-            if (results != null)
+            var notCachedIds = ids.Except(results.Select(i => i.Id)).ToArray();
+            if (notCachedIds.Length == 0)
                 return results;
 
-            results = _elasticClient.GetMany<T>(ids).Select(r => r.Source).ToList();
-            if (results.Count == 0)
-                return null;
+            // try using the object id to figure out what index the entity is located in
+            var foundItems = new List<T>();
+            var itemsToFind = new List<string>();
+            var multiGet = new MultiGetDescriptor();
+            foreach (var id in ids.Except(results.Select(i => i.Id))) {
+                string index = GetIndexName(id);
+                if (index != null)
+                    multiGet.Get<T>(f => f.Id(id).Index(index));
+                else
+                    itemsToFind.Add(id);
+            }
 
-            if (useCache)
-                Cache.Set(GetScopedCacheKey(cacheKey), results, expiresIn.HasValue ? DateTime.Now.Add(expiresIn.Value) : DateTime.Now.AddSeconds(RepositoryConstants.DEFAULT_CACHE_EXPIRATION_SECONDS));
+            foreach (var doc in _elasticClient.MultiGet(multiGet).Documents) {
+                if (doc.Found)
+                    foundItems.Add(doc.Source as T);
+                else
+                    itemsToFind.Add(doc.Id);
+            }
+
+            // fallback to doing a find
+            if (itemsToFind.Count > 0)
+                foundItems.AddRange(Find(new ElasticSearchOptions<T>().WithIds(itemsToFind)));
+            
+            if (useCache && foundItems.Count > 0)
+                foreach (var item in foundItems)
+                    Cache.Set(GetScopedCacheKey(item.Id), item, expiresIn.HasValue ? DateTime.Now.Add(expiresIn.Value) : DateTime.Now.AddSeconds(RepositoryConstants.DEFAULT_CACHE_EXPIRATION_SECONDS));
+
+            results.AddRange(foundItems);
 
             return results;
+        }
+
+        private string GetIndexName(string id) {
+            string index = null;
+            if (_isEvent) {
+                ObjectId objectId;
+                if (ObjectId.TryParse(id, out objectId) && objectId.CreationTime > MIN_OBJECTID_DATE)
+                    index = String.Concat(EventsIndexName, "-", objectId.CreationTime.ToString("yyyyMM"));
+            } else if (_isStack) {
+                index = StacksIndexName;
+            }
+
+            return index;
         }
 
         public bool Exists(string id) {

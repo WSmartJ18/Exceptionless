@@ -9,6 +9,7 @@ using Exceptionless.Core.Plugins.EventProcessor;
 using Exceptionless.Core.Repositories;
 using Exceptionless.Models;
 using Exceptionless.Tests.Utility;
+using Nest;
 using Xunit;
 using Xunit.Extensions;
 
@@ -16,6 +17,7 @@ namespace Exceptionless.Api.Tests.Pipeline {
     public class EventPipelineTests : IDisposable {
         private readonly IOrganizationRepository _organizationRepository = IoC.GetInstance<IOrganizationRepository>();
         private readonly IProjectRepository _projectRepository = IoC.GetInstance<IProjectRepository>();
+        private readonly ITokenRepository _tokenRepository = IoC.GetInstance<ITokenRepository>();
         private readonly IStackRepository _stackRepository = IoC.GetInstance<IStackRepository>();
         private readonly IEventRepository _eventRepository = IoC.GetInstance<IEventRepository>();
         private readonly UserRepository _userRepository = IoC.GetInstance<UserRepository>();
@@ -31,7 +33,7 @@ namespace Exceptionless.Api.Tests.Pipeline {
             RemoveData(true);
             CreateData();
 
-            PersistentEvent ev = EventData.GenerateEvent(id: TestConstants.EventId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, nestingLevel: 5, minimiumNestingLevel: 1);
+            PersistentEvent ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId);
 
             var organization = _organizationRepository.GetById(TestConstants.OrganizationId);
             Assert.NotNull(organization);
@@ -43,8 +45,7 @@ namespace Exceptionless.Api.Tests.Pipeline {
             Assert.Equal(0, project.TotalEventCount);
 
             var pipeline = IoC.GetInstance<EventPipeline>();
-            Exception exception = Record.Exception(() => pipeline.Run(ev));
-            Assert.Null(exception);
+            Assert.DoesNotThrow(() => pipeline.Run(ev));
 
             organization = _organizationRepository.GetById(TestConstants.OrganizationId);
             Assert.Equal(1, organization.TotalEventCount);
@@ -52,17 +53,15 @@ namespace Exceptionless.Api.Tests.Pipeline {
             project = _projectRepository.GetById(TestConstants.ProjectId);
             Assert.Equal(1, project.TotalEventCount);
 
-            exception = Record.Exception(() => pipeline.Run(ev));
-            Assert.Null(exception);
+            Assert.Throws<ArgumentException>(() => pipeline.Run(ev));
             organization = _organizationRepository.GetById(TestConstants.OrganizationId);
             Assert.Equal(1, organization.TotalEventCount);
 
             project = _projectRepository.GetById(TestConstants.ProjectId);
             Assert.Equal(1, project.TotalEventCount);
 
-            ev.Id = TestConstants.EventId2;
-            exception = Record.Exception(() => pipeline.Run(ev));
-            Assert.Null(exception);
+            ev.Id = null;
+            Assert.DoesNotThrow(() => pipeline.Run(ev));
 
             organization = _organizationRepository.GetById(TestConstants.OrganizationId);
             Assert.Equal(2, organization.TotalEventCount);
@@ -70,8 +69,7 @@ namespace Exceptionless.Api.Tests.Pipeline {
             project = _projectRepository.GetById(TestConstants.ProjectId);
             Assert.Equal(2, project.TotalEventCount);
 
-            exception = Record.Exception(() => pipeline.Run(EventData.GenerateSampleEvent(TestConstants.EventId8)));
-            Assert.Null(exception);
+            Assert.DoesNotThrow(() => pipeline.Run(EventData.GenerateSampleEvent()));
 
             organization = _organizationRepository.GetById(TestConstants.OrganizationId);
             Assert.Equal(3, organization.TotalEventCount);
@@ -79,12 +77,29 @@ namespace Exceptionless.Api.Tests.Pipeline {
             project = _projectRepository.GetById(TestConstants.ProjectId);
             Assert.Equal(3, project.TotalEventCount);
 
-            _eventRepository.RemoveAllByStackIdAsync(ev.StackId).Wait();
+            _eventRepository.RemoveAllByStackIdsAsync(new [] { ev.StackId }).Wait();
             organization = _organizationRepository.GetById(TestConstants.OrganizationId);
             Assert.Equal(3, organization.TotalEventCount);
 
             project = _projectRepository.GetById(TestConstants.ProjectId);
             Assert.Equal(3, project.TotalEventCount);
+        }
+
+        [Fact]
+        public void NoFutureEvents() {
+            var client = IoC.GetInstance<IElasticClient>();
+
+            var localTime = DateTime.Now;
+            PersistentEvent ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, occurrenceDate: localTime.AddMinutes(10));
+
+            var pipeline = IoC.GetInstance<EventPipeline>();
+            Assert.DoesNotThrow(() => pipeline.Run(ev));
+
+            client.Refresh();
+            ev = _eventRepository.GetById(ev.Id);
+            Assert.NotNull(ev);
+            Assert.True(ev.Date < localTime.AddMinutes(10));
+            Assert.True(ev.Date - localTime < TimeSpan.FromSeconds(5));
         }
 
         [Fact]
@@ -92,58 +107,63 @@ namespace Exceptionless.Api.Tests.Pipeline {
             const string Tag1 = "Tag One";
             const string Tag2 = "Tag Two";
             const string Tag2_Lowercase = "tag two";
+            var client = IoC.GetInstance<IElasticClient>();
 
-            PersistentEvent ev = EventData.GenerateEvent(id: TestConstants.EventId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, nestingLevel: 5, minimiumNestingLevel: 1);
+            PersistentEvent ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, occurrenceDate: DateTime.Now);
             ev.Tags.Add(Tag1);
 
             var pipeline = IoC.GetInstance<EventPipeline>();
             Assert.DoesNotThrow(() => pipeline.Run(ev));
 
+            client.Refresh();
             ev = _eventRepository.GetById(ev.Id);
             Assert.NotNull(ev);
             Assert.NotNull(ev.StackId);
 
-            var stack = _stackRepository.GetById(ev.StackId);
+            var stack = _stackRepository.GetById(ev.StackId, true);
             Assert.Equal(new TagSet { Tag1 }, stack.Tags);
 
-            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, nestingLevel: 5, minimiumNestingLevel: 1);
+            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, occurrenceDate: DateTime.Now);
             ev.Tags.Add(Tag2);
 
             Assert.DoesNotThrow(() => pipeline.Run(ev));
-            stack = _stackRepository.GetById(ev.StackId);
+            stack = _stackRepository.GetById(ev.StackId, true);
             Assert.Equal(new TagSet { Tag1, Tag2 }, stack.Tags);
 
-            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, nestingLevel: 5, minimiumNestingLevel: 1);
+            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, generateTags: false, occurrenceDate: DateTime.Now);
             ev.Tags.Add(Tag2_Lowercase);
 
             Assert.DoesNotThrow(() => pipeline.Run(ev));
-            stack = _stackRepository.GetById(ev.StackId);
+            stack = _stackRepository.GetById(ev.StackId, true);
             Assert.Equal(new TagSet { Tag1, Tag2 }, stack.Tags);
         }
 
         [Fact]
         public void EnsureSingleRegression() {
             var pipeline = IoC.GetInstance<EventPipeline>();
+            var client = IoC.GetInstance<IElasticClient>();
 
-            PersistentEvent ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, nestingLevel: 5, minimiumNestingLevel: 1);
+            PersistentEvent ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, occurrenceDate: DateTime.UtcNow);
             var context = new EventContext(ev);
             Assert.DoesNotThrow(() => pipeline.Run(context));
+            Assert.True(context.IsProcessed);
             Assert.False(context.IsRegression);
 
+            client.Refresh();
             ev = _eventRepository.GetById(ev.Id);
             Assert.NotNull(ev);
 
             var stack = _stackRepository.GetById(ev.StackId);
             stack.DateFixed = DateTime.UtcNow;
             stack.IsRegressed = false;
-            _stackRepository.Save(stack);
+            _stackRepository.Save(stack, true);
 
-            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, occurrenceDate: DateTime.UtcNow.AddDays(1), nestingLevel: 5, minimiumNestingLevel: 1);
+            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, occurrenceDate: DateTime.UtcNow.AddMinutes(1));
             context = new EventContext(ev);
             Assert.DoesNotThrow(() => pipeline.Run(context));
             Assert.True(context.IsRegression);
 
-            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, occurrenceDate: DateTime.UtcNow.AddDays(1), nestingLevel: 5, minimiumNestingLevel: 1);
+            ev = EventData.GenerateEvent(stackId: ev.StackId, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, occurrenceDate: DateTime.UtcNow.AddMinutes(1));
             context = new EventContext(ev);
             Assert.DoesNotThrow(() => pipeline.Run(context));
             Assert.False(context.IsRegression);
@@ -152,10 +172,6 @@ namespace Exceptionless.Api.Tests.Pipeline {
         [Theory]
         [PropertyData("Events")]
         public void ProcessEvents(string errorFilePath) {
-            // TODO: We currently fail to process this error due to https://jira.mongodb.org/browse/CSHARP-930
-            if (errorFilePath.Contains("881"))
-                return;
-            
             var parserPluginManager = IoC.GetInstance<EventParserPluginManager>();
             var events = parserPluginManager.ParseEvents(File.ReadAllText(errorFilePath), 2, "exceptionless/2.0.0.0");
             Assert.NotNull(events);
@@ -222,15 +238,16 @@ namespace Exceptionless.Api.Tests.Pipeline {
         }
 
         private void RemoveData(bool removeUserAndProjectAndOrganizationData = false) {
-            _eventRepository.RemoveAll(false);
-            _stackRepository.RemoveAll(false);
+            _eventRepository.RemoveAll();
+            _stackRepository.RemoveAll();
 
             if (!removeUserAndProjectAndOrganizationData)
                 return;
 
-            _userRepository.RemoveAll(false);
-            _projectRepository.RemoveAll(false);
-            _organizationRepository.RemoveAll(false);
+            _tokenRepository.RemoveAll();
+            _userRepository.RemoveAll();
+            _projectRepository.RemoveAll();
+            _organizationRepository.RemoveAll();
         }
 
         public void Dispose() {

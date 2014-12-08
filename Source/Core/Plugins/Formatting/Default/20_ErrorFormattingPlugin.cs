@@ -40,16 +40,29 @@ namespace Exceptionless.Core.Plugins.Formatting {
             if (stack.SignatureInfo == null || !stack.SignatureInfo.ContainsKey("ExceptionType"))
                 return null;
 
-            dynamic data = new { ExceptionType = stack.SignatureInfo["ExceptionType"] };
+            dynamic data = new ExpandoObject();
+            data.Title = stack.Title;
 
             string value;
-            if (stack.SignatureInfo.TryGetValue("Method", out value))
-                data.Method = value;
+            if (stack.SignatureInfo.TryGetValue("ExceptionType", out value)) {
+                data.Type = value.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries).Last();
+                data.TypeFullName = value;
+            }
+
+            if (stack.SignatureInfo.TryGetValue("Method", out value)) {
+                string method = value.Split(new[] { '.' }, StringSplitOptions.RemoveEmptyEntries).Last();
+                int index = method.IndexOf('(');
+                data.Method = index > 0 ? method.Substring(0, index) : method;
+                data.MethodFullName = value;
+            }
 
             if (stack.SignatureInfo.TryGetValue("Message", out value))
                 data.Message = value;
 
-            return new SummaryData("stack-error-summary", data);
+            if (stack.SignatureInfo.TryGetValue("Path", out value))
+                data.Path = value;
+
+            return new SummaryData { TemplateKey = "stack-error-summary", Data = data };
         }
 
         public override SummaryData GetEventSummaryData(PersistentEvent ev) {
@@ -79,7 +92,7 @@ namespace Exceptionless.Core.Plugins.Formatting {
             if (requestInfo != null && !String.IsNullOrEmpty(requestInfo.Path))
                 data.Path = requestInfo.Path;
 
-            return new SummaryData("event-error-summary", data);
+            return new SummaryData { TemplateKey = "event-error-summary", Data = data };
         }
 
         public override MailMessage GetEventNotificationMailMessage(EventNotification model) {

@@ -11,38 +11,87 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Net;
 using System.Web.Http;
+using System.Web.Http.Results;
 using Exceptionless.Api.Extensions;
+using Exceptionless.Api.Security;
 using Exceptionless.Api.Utility;
 using Exceptionless.Core.Extensions;
 using Exceptionless.Api.Utility.Results;
+using Exceptionless.Core.Repositories;
 using Exceptionless.Models;
+using Exceptionless.DateTimeExtensions;
 
 namespace Exceptionless.Api.Controllers {
     [RequireHttpsExceptLocal]
     public abstract class ExceptionlessApiController : ApiController {
         public const int API_CURRENT_VERSION = 2;
         public const string API_PREFIX = "api/v2";
+        protected const int DEFAULT_LIMIT = 10;
+        protected const int MAXIMUM_LIMIT = 100;
+        protected const int MAXIMUM_SKIP = 1000;
 
-        protected Tuple<DateTime, DateTime> GetDateRange(DateTime? starTime, DateTime? endTime) {
-            if (starTime == null)
-                starTime = DateTime.MinValue;
-
-            if (endTime == null)
-                endTime = DateTime.MaxValue;
-
-            return starTime < endTime ? new Tuple<DateTime, DateTime>(starTime.Value, endTime.Value) : new Tuple<DateTime, DateTime>(endTime.Value, starTime.Value);
+        public ExceptionlessApiController() {
+            AllowedFields = new List<string>();
         }
 
-        protected const int DEFAULT_LIMIT = 10;
+        protected TimeSpan GetOffset(string offset) {
+            double offsetInMinutes;
+            if (!String.IsNullOrEmpty(offset) && Double.TryParse(offset, out offsetInMinutes))
+                return TimeSpan.FromMinutes(offsetInMinutes);
+
+            return TimeSpan.Zero;
+        }
+
+        protected ICollection<string> AllowedFields { get; private set; }
+
+        protected virtual TimeInfo GetTimeInfo(string time, string offset) {
+            string field = null;
+            if (!String.IsNullOrEmpty(time) && time.Contains("|")) {
+                var parts = time.Split(new[] { '|' }, StringSplitOptions.RemoveEmptyEntries);
+                field = parts.Length > 0 && AllowedFields.Contains(parts[0]) ? parts[0] : null;
+                time = parts.Length > 1 ? parts[1] : null;
+            }
+
+            var utcOffset = GetOffset(offset);
+
+            // range parsing needs to be based on the user's local time.
+            var localRange = DateTimeRange.Parse(time, DateTime.UtcNow.Add(utcOffset));
+            var utcRange = localRange != DateTimeRange.Empty ? localRange.Subtract(utcOffset) : localRange;
+
+            return new TimeInfo {
+                Field = field,
+                Offset = utcOffset,
+                UtcRange = utcRange
+            };
+        }
+
+        protected virtual Tuple<string, SortOrder> GetSort(string sort) {
+            var order = SortOrder.Ascending;
+            if (!String.IsNullOrEmpty(sort) && sort.StartsWith("-")) {
+                sort = sort.Substring(1);
+                order = SortOrder.Descending;
+            }
+
+            return Tuple.Create(AllowedFields.Contains(sort) ? sort : null, order);
+        } 
 
         protected int GetLimit(int limit) {
             if (limit < 1)
                 limit = DEFAULT_LIMIT;
-            else if (limit > 100)
-                limit = 100;
+            else if (limit > MAXIMUM_LIMIT)
+                limit = MAXIMUM_LIMIT;
 
             return limit;
+        }
+
+        protected int GetPage(int page) {
+            if (page < 1)
+                page = 1;
+
+            return page;
         }
 
         protected int GetSkip(int currentPage, int limit) {
@@ -55,7 +104,6 @@ namespace Exceptionless.Api.Controllers {
 
             return skip;
         }
-
 
         public User ExceptionlessUser {
             get { return Request.GetUser(); }
@@ -81,8 +129,23 @@ namespace Exceptionless.Api.Controllers {
             return Request.GetAssociatedOrganizationIds();
         }
 
+        public string GetAssociatedOrganizationsFilter() {
+            if (Request.IsGlobalAdmin())
+                return null;
+
+            return String.Concat("organization:", String.Join(" OR organization:", GetAssociatedOrganizationIds()));
+        }
+
         public string GetDefaultOrganizationId() {
             return Request.GetDefaultOrganizationId();
+        }
+
+        protected IHttpActionResult BadRequest(ModelActionResults results) {
+            return new NegotiatedContentResult<ModelActionResults>(HttpStatusCode.BadRequest, results, this);
+        }
+
+        public PermissionActionResult Permission(PermissionResult permission) {
+            return new PermissionActionResult(permission, Request);
         }
 
         public PlanLimitReachedActionResult PlanLimitReached(string message) {
@@ -91,6 +154,18 @@ namespace Exceptionless.Api.Controllers {
 
         public NotImplementedActionResult NotImplemented(string message) {
             return new NotImplementedActionResult(message, Request);
+        }
+
+        public OkWithHeadersContentResult<T> OkWithLinks<T>(T content, params string[] links) {
+            return new OkWithHeadersContentResult<T>(content, this, links.Where(l => l != null).Select(l => new KeyValuePair<string, IEnumerable<string>>("Link", new[] { l })));
+        }
+
+        public OkWithHeadersContentResult<T> OkWithHeaders<T>(T content, params Tuple<string, string>[] headers) {
+            return new OkWithHeadersContentResult<T>(content, this, headers.Where(h => h != null).Select(h => new KeyValuePair<string, IEnumerable<string>>(h.Item1, new[] { h.Item2 })));
+        }
+
+        public OkWithHeadersContentResult<T> OkWithHeaders<T>(T content, params Tuple<string, string[]>[] headers) {
+            return new OkWithHeadersContentResult<T>(content, this, headers.Select(h => new KeyValuePair<string, IEnumerable<string>>(h.Item1, h.Item2)));
         }
 
         public OkWithHeadersContentResult<T> OkWithHeaders<T>(T content, IEnumerable<KeyValuePair<string, IEnumerable<string>>> headers) {
@@ -110,6 +185,14 @@ namespace Exceptionless.Api.Controllers {
             if (totalLimitedByPlan > 0)
                 headers.Add(ExceptionlessHeaders.LimitedByPlan, new[] { totalLimitedByPlan.ToString() });
             return headers;
+        }
+
+        protected string GetResourceLink(string url, string type) {
+            return url != null ? String.Format("<{0}>; rel=\"{1}\"", url, type) : null;
+        }
+
+        protected bool NextPageExceedsSkipLimit(int page, int limit) {
+            return (page + 1) * limit >= MAXIMUM_SKIP;
         }
     }
 }

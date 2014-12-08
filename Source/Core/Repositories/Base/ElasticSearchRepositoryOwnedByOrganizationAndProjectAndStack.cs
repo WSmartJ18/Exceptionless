@@ -9,19 +9,19 @@ using Nest;
 
 namespace Exceptionless.Core.Repositories {
     public abstract class ElasticSearchRepositoryOwnedByOrganizationAndProjectAndStack<T> : ElasticSearchRepositoryOwnedByOrganizationAndProject<T>, IRepositoryOwnedByStack<T> where T : class, IOwnedByProject, IIdentity, IOwnedByStack, IOwnedByOrganization, new() {
-        public ElasticSearchRepositoryOwnedByOrganizationAndProjectAndStack(ElasticClient elasticClient, IValidator<T> validator = null, ICacheClient cacheClient = null, IMessagePublisher messagePublisher = null)
+        public ElasticSearchRepositoryOwnedByOrganizationAndProjectAndStack(IElasticClient elasticClient, IValidator<T> validator = null, ICacheClient cacheClient = null, IMessagePublisher messagePublisher = null)
             : base(elasticClient, validator, cacheClient, messagePublisher) {}
 
         public virtual ICollection<T> GetByStackId(string stackId, PagingOptions paging = null, bool useCache = false, TimeSpan? expiresIn = null) {
-            return Find<T>(new ElasticSearchOptions<T>()
+            return Find(new ElasticSearchOptions<T>()
                 .WithStackId(stackId)
                 .WithPaging(paging)
                 .WithCacheKey(useCache ? String.Concat("stack:", stackId) : null)
                 .WithExpiresIn(expiresIn));
         }
 
-        public async Task RemoveAllByStackIdAsync(string stackId) {
-            await Task.Run(() => RemoveAll(new QueryOptions().WithStackId(stackId)));
+        public async Task RemoveAllByStackIdsAsync(string[] stackIds) {
+            await Task.Run(() => RemoveAll(new QueryOptions().WithStackIds(stackIds)));
         }
 
         public override void InvalidateCache(T document) {

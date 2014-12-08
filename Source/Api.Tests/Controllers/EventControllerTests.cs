@@ -22,6 +22,7 @@ using System.Web.Http;
 using System.Web.Http.Results;
 using Exceptionless.Api.Controllers;
 using Exceptionless.Api.Tests.Utility;
+using Exceptionless.Core.AppStats;
 using Exceptionless.Core.Authorization;
 using Exceptionless.Core.Extensions;
 using Exceptionless.Core.Jobs;
@@ -34,7 +35,7 @@ using Xunit;
 namespace Exceptionless.Api.Tests.Controllers {
     public class EventControllerTests : MongoTestHelper {
         private readonly EventController _eventController = IoC.GetInstance<EventController>();
-        private readonly InMemoryQueue<EventPost> _eventQueue = IoC.GetInstance<IQueue<EventPost>>() as InMemoryQueue<EventPost>;
+        private readonly IQueue<EventPost> _eventQueue = IoC.GetInstance<IQueue<EventPost>>();
 
         public EventControllerTests() {
             ResetDatabase();
@@ -43,19 +44,26 @@ namespace Exceptionless.Api.Tests.Controllers {
 
         [Fact]
         public void CanPostString() {
+            _eventQueue.DeleteQueue();
             RemoveAllEvents();
 
             try {
                 _eventController.Request = CreateRequestMessage(new ClaimsPrincipal(IdentityUtils.CreateUserIdentity(TestConstants.UserEmail, TestConstants.UserId, new[] { TestConstants.OrganizationId }, new[] { AuthorizationRoles.Client }, TestConstants.ProjectId)), false, false);
+
+                var statsCounter = IoC.GetInstance<IAppStatsClient>() as InMemoryAppStatsClient;
+                Assert.NotNull(statsCounter);
                 
-                var actionResult = _eventController.Post(Encoding.UTF8.GetBytes("simple string")).Result;
-                Assert.IsType<StatusCodeResult>(actionResult);
-                Assert.Equal(1, _eventQueue.Count);
+                Assert.True(statsCounter.WaitForCounter(StatNames.PostsQueued, work: () => {
+                    var actionResult = _eventController.Post(Encoding.UTF8.GetBytes("simple string"));
+                    Assert.IsType<StatusCodeResult>(actionResult);
+                }));
+
+                Assert.Equal(1, _eventQueue.GetQueueCount());
 
                 var processEventsJob = IoC.GetInstance<ProcessEventPostsJob>();
-                processEventsJob.Run(1);
+                processEventsJob.Run();
 
-                Assert.Equal(0, _eventQueue.Count);
+                Assert.Equal(0, _eventQueue.GetQueueCount());
                 Assert.Equal(1, EventCount());
             } finally {
                 RemoveAllEvents();
@@ -64,18 +72,19 @@ namespace Exceptionless.Api.Tests.Controllers {
 
         [Fact]
         public void CanPostCompressedString() {
+            _eventQueue.DeleteQueue();
             RemoveAllEvents();
 
             try {
                 _eventController.Request = CreateRequestMessage(new ClaimsPrincipal(IdentityUtils.CreateUserIdentity(TestConstants.UserEmail, TestConstants.UserId, new[] { TestConstants.OrganizationId }, new[] { AuthorizationRoles.Client }, TestConstants.ProjectId)), true, false);
-                var actionResult = _eventController.Post(Encoding.UTF8.GetBytes("simple string").Compress()).Result;
+                var actionResult = _eventController.Post(Encoding.UTF8.GetBytes("simple string").Compress());
                 Assert.IsType<StatusCodeResult>(actionResult);
-                Assert.Equal(1, _eventQueue.Count);
+                Assert.Equal(1, _eventQueue.GetQueueCount());
 
                 var processEventsJob = IoC.GetInstance<ProcessEventPostsJob>();
-                processEventsJob.Run(1);
+                processEventsJob.Run();
 
-                Assert.Equal(0, _eventQueue.Count);
+                Assert.Equal(0, _eventQueue.GetQueueCount());
                 Assert.Equal(1, EventCount());
             } finally {
                 RemoveAllEvents();
@@ -84,18 +93,19 @@ namespace Exceptionless.Api.Tests.Controllers {
 
         [Fact]
         public void CanPostSingleEvent() {
+            _eventQueue.DeleteQueue();
             RemoveAllEvents();
             
             try {
                 _eventController.Request = CreateRequestMessage(new ClaimsPrincipal(IdentityUtils.CreateUserIdentity(TestConstants.UserEmail, TestConstants.UserId, new[] { TestConstants.OrganizationId }, new[] { AuthorizationRoles.Client }, TestConstants.ProjectId)), true, false);
-                var actionResult = _eventController.Post(Encoding.UTF8.GetBytes("simple string").Compress()).Result;
+                var actionResult = _eventController.Post(Encoding.UTF8.GetBytes("simple string").Compress());
                 Assert.IsType<StatusCodeResult>(actionResult);
-                Assert.Equal(1, _eventQueue.Count);
+                Assert.Equal(1, _eventQueue.GetQueueCount());
 
                 var processEventsJob = IoC.GetInstance<ProcessEventPostsJob>();
-                processEventsJob.Run(1);
+                processEventsJob.Run();
 
-                Assert.Equal(0, _eventQueue.Count);
+                Assert.Equal(0, _eventQueue.GetQueueCount());
                 Assert.Equal(1, EventCount());
             } finally {
                 RemoveAllEvents();

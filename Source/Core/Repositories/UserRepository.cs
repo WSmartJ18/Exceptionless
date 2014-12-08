@@ -12,7 +12,6 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using Exceptionless.Core.Caching;
 using Exceptionless.Core.Messaging;
 using Exceptionless.Core.Messaging.Models;
@@ -23,6 +22,7 @@ using MongoDB.Bson.Serialization;
 using MongoDB.Bson.Serialization.Options;
 using MongoDB.Driver;
 using MongoDB.Driver.Builders;
+using MongoDB.Driver.Linq;
 
 namespace Exceptionless.Core.Repositories {
     public class UserRepository : MongoRepository<User>, IUserRepository {
@@ -32,7 +32,22 @@ namespace Exceptionless.Core.Repositories {
             if (String.IsNullOrEmpty(emailAddress))
                 return null;
 
-            return FindOne<User>(new MongoOptions().WithQuery(Query.EQ(FieldNames.EmailAddress, emailAddress)).WithCacheKey(emailAddress));
+            return FindOne<User>(new MongoOptions().WithQuery(Query.EQ(FieldNames.EmailAddress, emailAddress.ToLowerInvariant())).WithCacheKey(emailAddress));
+        }
+
+        public User GetByPasswordResetToken(string token) {
+            if (String.IsNullOrEmpty(token))
+                return null;
+
+            return FindOne<User>(new MongoOptions().WithQuery(Query.EQ(FieldNames.PasswordResetToken, token)));
+        }
+
+        public User GetUserByOAuthProvider(string provider, string providerUserId) {
+            if (String.IsNullOrEmpty(provider) || String.IsNullOrEmpty(providerUserId))
+                return null;
+
+            provider = provider.ToLowerInvariant();
+            return _collection.AsQueryable().FirstOrDefault(u => u.OAuthAccounts.Any(o => o.Provider == provider && o.ProviderUserId == providerUserId));
         }
 
         public User GetByVerifyEmailAddressToken(string token) {
@@ -68,6 +83,7 @@ namespace Exceptionless.Core.Repositories {
             public const string OrganizationIds = "OrganizationIds";
             public const string OAuthAccounts_Provider = "OAuthAccounts.Provider";
             public const string OAuthAccounts_ProviderUserId = "OAuthAccounts.ProviderUserId";
+            public const string PasswordResetToken = "PasswordResetToken";
         }
 
         protected override void InitializeCollection(MongoDatabase database) {
@@ -76,7 +92,6 @@ namespace Exceptionless.Core.Repositories {
             _collection.CreateIndex(IndexKeys<User>.Ascending(u => u.OrganizationIds), IndexOptions.SetBackground(true));
             _collection.CreateIndex(IndexKeys<User>.Ascending(u => u.EmailAddress), IndexOptions.SetUnique(true).SetBackground(true));
             _collection.CreateIndex(IndexKeys.Ascending(FieldNames.OAuthAccounts_Provider, FieldNames.OAuthAccounts_ProviderUserId), IndexOptions.SetUnique(true).SetSparse(true).SetBackground(true));
-            _collection.CreateIndex(IndexKeys<User>.Ascending(u => u.Roles), IndexOptions.SetBackground(true));
         }
 
         protected override void ConfigureClassMap(BsonClassMap<User> cm) {
@@ -94,6 +109,20 @@ namespace Exceptionless.Core.Repositories {
         
         #endregion
 
+        protected override void BeforeAdd(ICollection<User> documents) {
+            foreach (var user in documents.Where(user => !String.IsNullOrEmpty(user.EmailAddress)))
+                user.EmailAddress = user.EmailAddress.ToLowerInvariant();
+
+            base.BeforeAdd(documents);
+        }
+
+        protected override void BeforeSave(ICollection<User> documents) {
+            foreach (var user in documents.Where(user => !String.IsNullOrEmpty(user.EmailAddress)))
+                user.EmailAddress = user.EmailAddress.ToLowerInvariant();
+
+            base.BeforeSave(documents);
+        }
+
         public override void InvalidateCache(User user) {
             if (Cache == null)
                 return;
@@ -105,7 +134,7 @@ namespace Exceptionless.Core.Repositories {
                 InvalidateCache(String.Concat("org:", organizationId));
         }
 
-        protected override async Task PublishMessageAsync(EntityChangeType changeType, User user) {
+        protected override void PublishMessage(EntityChangeType changeType, User user) {
             if (user.OrganizationIds.Any()) {
                 foreach (var organizationId in user.OrganizationIds) {
                     var message = new EntityChanged {
@@ -115,10 +144,10 @@ namespace Exceptionless.Core.Repositories {
                         Type = _entityType
                     };
 
-                    await _messagePublisher.PublishAsync(message);
+                    _messagePublisher.Publish(message);
                 }
             } else {
-                await base.PublishMessageAsync(changeType, user);
+                base.PublishMessage(changeType, user);
             }
         }
     }

@@ -49,7 +49,7 @@ namespace Exceptionless.Queue {
         }
 
         public void Process() {
-            if (IsQueueProcessingSuspended || _processingQueue)
+            if (_processingQueue)
                 return;
 
             _log.Info(typeof(DefaultEventQueue), "Processing queue...");
@@ -85,7 +85,7 @@ namespace Exceptionless.Queue {
                             SuspendProcessing(TimeSpan.FromMinutes(15));
                         } else if (response.NotFound || response.BadRequest) {
                             // The service end point could not be found.
-                            _log.Error(typeof(DefaultEventQueue), "Unable to reach the service end point, please check your configuration. The event will not be submitted.");
+                            _log.FormattedError(typeof(DefaultEventQueue), "Error while trying to submit data: {0}", response.Message);
                             SuspendProcessing(TimeSpan.FromHours(4));
                         } else if (!response.Success) {
                             _log.Error(typeof(DefaultEventQueue), String.Format("An error occurred while submitting events: {0}", response.Message));
@@ -117,7 +117,7 @@ namespace Exceptionless.Queue {
         }
 
         private void OnProcessQueue(object state) {
-            if (!_processingQueue)
+            if (!IsQueueProcessingSuspended && !_processingQueue)
                 Process();
         }
 

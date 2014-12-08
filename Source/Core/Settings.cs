@@ -65,7 +65,11 @@ namespace Exceptionless.Core {
 
         public RedisConnectionInfo RedisConnectionInfo { get; private set; }
 
+        public bool EnableRedis { get; private set; }
+
         public string MongoConnectionString { get; private set; }
+
+        public string ElasticSearchConnectionString { get; set; }
 
         public string Version { get; private set; }
 
@@ -89,21 +93,15 @@ namespace Exceptionless.Core {
 
         public string GitHubAppSecret { get; private set; }
 
+        public string GoogleAppId { get; private set; }
+
+        public string GoogleAppSecret { get; private set; }
+
         public bool EnableBilling { get { return !String.IsNullOrEmpty(StripeApiKey); } }
 
         public string StripeApiKey { get; private set; }
 
         public string StripePublishableApiKey { get; private set; }
-
-        public bool UseAzureServiceBus { get { return !String.IsNullOrEmpty(AzureServiceBusConnectionString); } }
-
-        public string AzureServiceBusConnectionString { get; private set; }
-
-        public bool UseAzureCache { get { return !String.IsNullOrEmpty(AzureCacheEndpoint); } }
-
-        public string AzureCacheEndpoint { get; private set; }
-
-        public string AzureCacheAuthorizationToken { get; private set; }
         
         private static Settings Init() {
             var settings = new Settings();
@@ -145,6 +143,8 @@ namespace Exceptionless.Core {
             settings.EnableAppStats = ConfigurationManager.AppSettings.GetBool("EnableAppStats", false);
             settings.IntercomAppId = ConfigurationManager.AppSettings["IntercomAppId"];
             settings.GoogleAnalyticsId = ConfigurationManager.AppSettings["GoogleAnalyticsId"];
+            settings.GoogleAppId = ConfigurationManager.AppSettings["GoogleAppId"];
+            settings.GoogleAppSecret = ConfigurationManager.AppSettings["GoogleAppSecret"];
             settings.MicrosoftAppId = ConfigurationManager.AppSettings["MicrosoftAppId"];
             settings.MicrosoftAppSecret = ConfigurationManager.AppSettings["MicrosoftAppSecret"];
             settings.FacebookAppId = ConfigurationManager.AppSettings["FacebookAppId"];
@@ -153,17 +153,19 @@ namespace Exceptionless.Core {
             settings.GitHubAppSecret = ConfigurationManager.AppSettings["GitHubAppSecret"];
             settings.StripeApiKey = ConfigurationManager.AppSettings["StripeApiKey"];
             settings.StripePublishableApiKey = ConfigurationManager.AppSettings["StripePublishableApiKey"];
-            settings.AzureServiceBusConnectionString = ConfigurationManager.AppSettings["AzureServiceBusConnectionString"] ?? Environment.GetEnvironmentVariable("AzureServiceBusConnectionString");
-            settings.AzureCacheEndpoint = ConfigurationManager.AppSettings["AzureCacheEndpoint"] ?? Environment.GetEnvironmentVariable("AzureCacheEndpoint");
-            settings.AzureCacheAuthorizationToken = ConfigurationManager.AppSettings["AzureCacheAuthorizationToken"] ?? Environment.GetEnvironmentVariable("AzureCacheAuthorizationToken");
             
             ConnectionStringSettings redisConnectionInfo = ConfigurationManager.ConnectionStrings["RedisConnectionString"];
             if (redisConnectionInfo != null)
                 settings.RedisConnectionInfo = String.IsNullOrEmpty(redisConnectionInfo.ConnectionString) ? null : RedisConnectionInfo.Parse(redisConnectionInfo.ConnectionString);
+            settings.EnableRedis = ConfigurationManager.AppSettings.GetBool("EnableRedis", settings.RedisConnectionInfo != null);
 
             ConnectionStringSettings mongoConnectionString = ConfigurationManager.ConnectionStrings["MongoConnectionString"];
             if (mongoConnectionString != null)
                 settings.MongoConnectionString = mongoConnectionString.ConnectionString;
+
+            ConnectionStringSettings elasticSearchConnectionString = ConfigurationManager.ConnectionStrings["ElasticSearchConnectionString"];
+            if (elasticSearchConnectionString != null)
+                settings.ElasticSearchConnectionString = elasticSearchConnectionString.ConnectionString;
 
             settings.Version = ThisAssembly.AssemblyInformationalVersion;
 

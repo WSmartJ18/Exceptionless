@@ -10,29 +10,29 @@
 #endregion
 
 using System;
-using System.Collections;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-using CodeSmith.Core.Extensions;
-using CodeSmith.Core.Scheduler;
+using Exceptionless.Core.Lock;
 using Exceptionless.Core.Queues;
 using Exceptionless.Core.Queues.Models;
 using Exceptionless.Core.Repositories;
+using Exceptionless.DateTimeExtensions;
 using NLog.Fluent;
 
 namespace Exceptionless.Core.Jobs {
-    public class DailyNotificationJob : Job {
+    public class DailyNotificationJob : JobBase {
         private readonly IProjectRepository _projectRepository;
         private readonly IQueue<SummaryNotification> _summaryNotificationQueue;
 
-        public DailyNotificationJob(IProjectRepository projectRepository, IQueue<SummaryNotification> summaryNotificationQueue) {
+        public DailyNotificationJob(IProjectRepository projectRepository, IQueue<SummaryNotification> summaryNotificationQueue, ILockProvider lockProvider) {
             _projectRepository = projectRepository;
             _summaryNotificationQueue = summaryNotificationQueue;
+            LockProvider = lockProvider;
         }
 
-        public override Task<JobResult> RunAsync(JobRunContext context) {
+        protected override Task<JobResult> RunInternalAsync(CancellationToken token) {
             Log.Info().Message("Daily Notification job starting").Write();
 
             if (!Settings.Current.EnableSummaryNotifications)
@@ -62,7 +62,7 @@ namespace Exceptionless.Core.Jobs {
                         };
 
                         Log.Info().Message("Publishing Summary Notification for Project: {0}, with a start time of {1} and an end time of {2}", notification.Id, notification.UtcStartTime, notification.UtcEndTime);
-                        _summaryNotificationQueue.EnqueueAsync(notification);
+                        _summaryNotificationQueue.Enqueue(notification);
                     } else
                         Log.Error().Message("Message Factory is null").Write();
                 }

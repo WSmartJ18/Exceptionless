@@ -40,7 +40,7 @@ namespace Exceptionless.App.Controllers.API {
         
         [HttpGet]
         [Route("~/" + API_PREFIX + "/projects/{projectId:objectid}/webhooks")]
-        public IHttpActionResult GetByProject(string projectId, string before = null, string after = null, int limit = 10) {
+        public IHttpActionResult GetByProject(string projectId, int page = 1, int limit = 10) {
             if (String.IsNullOrEmpty(projectId))
                 return NotFound();
 
@@ -48,9 +48,11 @@ namespace Exceptionless.App.Controllers.API {
             if (project == null || !CanAccessOrganization(project.OrganizationId))
                 return NotFound();
 
-            var options = new PagingOptions { Before = before, After = after, Limit = limit };
+            page = GetPage(page);
+            limit = GetLimit(limit);
+            var options = new PagingOptions { Page = page, Limit = limit };
             var results = _repository.GetByProjectId(projectId, options);
-            return OkWithResourceLinks(results, options.HasMore, e => e.Id);
+            return OkWithResourceLinks(results, options.HasMore && !NextPageExceedsSkipLimit(page, limit), page);
         }
 
         [HttpGet]
@@ -73,9 +75,9 @@ namespace Exceptionless.App.Controllers.API {
         }
 
         [HttpDelete]
-        [Route("{id:objectid}")]
-        public override IHttpActionResult Delete(string id) {
-            return base.Delete(id);
+        [Route("{ids:objectids}")]
+        public override IHttpActionResult Delete([CommaDelimitedArray]string[] ids) {
+            return base.Delete(ids);
         }
 
         #endregion
@@ -153,29 +155,38 @@ namespace Exceptionless.App.Controllers.API {
         }
 
         protected override PermissionResult CanAdd(WebHook value) {
-            if (String.IsNullOrEmpty(value.ProjectId))
-                return PermissionResult.DenyWithResult(BadRequest());
+            if (String.IsNullOrEmpty(value.ProjectId) || String.IsNullOrEmpty(value.Url) || value.EventTypes.Length == 0)
+                return PermissionResult.Deny;
 
             Project project = _projectRepository.GetById(value.ProjectId, true);
             if (!IsInProject(project))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.Deny;
 
             if (!_billingManager.CanAddIntegration(project))
-                return PermissionResult.DenyWithResult(PlanLimitReached("Please upgrade your plan to add integrations."));
+                return PermissionResult.DenyWithPlanLimitReached("Please upgrade your plan to add integrations.");
 
             return base.CanAdd(value);
         }
 
+        protected override WebHook AddModel(WebHook value) {
+            if (!IsValidWebHookVersion(value.Version))
+                value.Version = new Version(2, 0);
+
+            return base.AddModel(value);
+        }
+
         protected override PermissionResult CanUpdate(WebHook original, Delta<NewWebHook> changes) {
             if (!IsInProject(original.ProjectId))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.Deny;
             
+            // TODO: The changes might actually change the project id, url and event types.
+
             return base.CanUpdate(original, changes);
         }
 
         protected override PermissionResult CanDelete(WebHook value) {
             if (!IsInProject(value.ProjectId))
-                return PermissionResult.DenyWithResult(BadRequest());
+                return PermissionResult.DenyWithNotFound(value.Id);
 
             return base.CanDelete(value);
         }
@@ -193,5 +204,10 @@ namespace Exceptionless.App.Controllers.API {
 
             return IsInOrganization(value.OrganizationId);
         }
+
+        private bool IsValidWebHookVersion(Version version) {
+            return version != null && version.Major >= 1 && version.Major <= 2;
+        }
+
     }
 }

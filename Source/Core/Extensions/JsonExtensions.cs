@@ -189,12 +189,20 @@ namespace Exceptionless.Core.Extensions {
             return data.ToObject<T>(serializer);
         }
 
+        public static object FromJson(this string data, Type objectType, JsonSerializerSettings settings = null) {
+            JsonSerializer serializer = settings == null ? JsonSerializer.CreateDefault() : JsonSerializer.CreateDefault(settings);
+
+            using (var sw = new StringReader(data))
+            using (var sr = new JsonTextReader(sw))
+                return serializer.Deserialize(sr, objectType);
+        }
+
         public static T FromJson<T>(this string data, JsonSerializerSettings settings = null) {
             JsonSerializer serializer = settings == null ? JsonSerializer.CreateDefault() : JsonSerializer.CreateDefault(settings);
 
             using (var sw = new StringReader(data))
-                using (var sr = new JsonTextReader(sw))
-                    return serializer.Deserialize<T>(sr);
+            using (var sr = new JsonTextReader(sw))
+                return serializer.Deserialize<T>(sr);
         }
 
         public static bool TryFromJson<T>(this string data, out T value, JsonSerializerSettings settings = null) {
@@ -269,11 +277,12 @@ namespace Exceptionless.Core.Extensions {
                 if (typeof(IEnumerable).IsAssignableFrom(property.PropertyType)) {
                     var countProperty = property.PropertyType.GetProperty("Count");
                     if (countProperty != null)
-                        _countAccessors.Add(property.PropertyType, LateBinder.GetPropertyAccessor(countProperty));
+                        _countAccessors[property.PropertyType] = LateBinder.GetPropertyAccessor(countProperty);
                     else
-                        _countAccessors.Add(property.PropertyType, null);
-                } else
-                    _countAccessors.Add(property.PropertyType, null);
+                        _countAccessors[property.PropertyType] = null;
+                } else {
+                    _countAccessors[property.PropertyType] = null;
+                }
             }
 
             var countAccessor = _countAccessors[property.PropertyType];

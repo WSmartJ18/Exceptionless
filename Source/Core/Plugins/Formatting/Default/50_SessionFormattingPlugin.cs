@@ -11,25 +11,25 @@ namespace Exceptionless.Core.Plugins.Formatting {
             return ev.IsSessionStart() || ev.IsSessionEnd();
         }
         
-        public SummaryData GetStackSummaryData(Stack stack) {
+        public override SummaryData GetStackSummaryData(Stack stack) {
             if (!stack.SignatureInfo.ContainsKeyWithValue("Type", Event.KnownTypes.SessionStart, Event.KnownTypes.SessionEnd))
                 return null;
 
-            return new SummaryData("stack-session-summary", new { Title = stack.Title });
+            return new SummaryData { TemplateKey = "stack-session-summary", Data = new { Title = stack.Title } };
         }
 
         public override string GetStackTitle(PersistentEvent ev) {
             if (!ShouldHandle(ev))
                 return null;
 
-            return ev.IsSessionStart() ? "Session Starts" : "Session Ends";
+            return ev.IsSessionStart() ? "Session Start" : "Session End";
         }
 
         public override SummaryData GetEventSummaryData(PersistentEvent ev) {
             if (!ShouldHandle(ev))
                 return null;
 
-            return new SummaryData("event-session-summary", new { SessionId = ev.SessionId });
+            return new SummaryData { TemplateKey = "event-session-summary", Data = new { SessionId = ev.SessionId } };
         }
 
         public override string GetEventViewName(PersistentEvent ev) {

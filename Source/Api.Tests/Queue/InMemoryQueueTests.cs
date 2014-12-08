@@ -1,157 +1,342 @@
 ﻿using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using CodeSmith.Core.Component;
 using CodeSmith.Core.Helpers;
-using CodeSmith.Core.Threading;
 using Exceptionless.Core.Queues;
 using Xunit;
 
 namespace Exceptionless.Api.Tests.Queue {
     public class InMemoryQueueTests {
+        private IQueue<SimpleWorkItem> _queue;
+
+        protected virtual IQueue<SimpleWorkItem> GetQueue(int retries = 1, TimeSpan? workItemTimeout = null, TimeSpan? retryDelay = null) {
+            if (_queue == null)
+                _queue = new InMemoryQueue<SimpleWorkItem>(retries, retryDelay, workItemTimeout: workItemTimeout);
+
+            return _queue;
+        }
+
         [Fact]
-        public void CanQueueAndDequeueWorkItem() {
-            var queue = new InMemoryQueue<SimpleWorkItem>();
-            queue.EnqueueAsync(new SimpleWorkItem {
-                Data = "Hello"
-            });
-            Assert.Equal(1, queue.Count);
+        public async Task CanQueueAndDequeueWorkItem() {
+            using (var queue = GetQueue()) {
+                queue.DeleteQueue();
 
-            var workItem = queue.DequeueAsync(0).Result;
-            Assert.NotNull(workItem);
-            Assert.Equal("Hello", workItem.Value.Data);
-            Assert.Equal(0, queue.Count);
-            Assert.Equal(1, queue.Dequeued);
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+                Assert.Equal(1, queue.GetQueueCount());
 
-            workItem.CompleteAsync().Wait();
-            Assert.Equal(1, queue.Completed);
+                var workItem = queue.Dequeue(TimeSpan.Zero);
+                Assert.NotNull(workItem);
+                Assert.Equal("Hello", workItem.Value.Data);
+                Assert.Equal(1, queue.DequeuedCount);
+
+                workItem.Complete();
+                Assert.Equal(1, queue.CompletedCount);
+                Assert.Equal(0, queue.GetQueueCount());
+            }
+        }
+
+        [Fact]
+        public void WillWaitForItem() {
+            using (var queue = GetQueue()) {
+                queue.DeleteQueue();
+
+                TimeSpan timeToWait = TimeSpan.FromSeconds(1);
+                var sw = new Stopwatch();
+                sw.Start();
+                var workItem = queue.Dequeue(timeToWait);
+                sw.Stop();
+                Trace.WriteLine(sw.Elapsed);
+                Assert.Null(workItem);
+                Assert.True(sw.Elapsed > timeToWait.Subtract(TimeSpan.FromMilliseconds(10)));
+
+                Task.Factory.StartNewDelayed(100, () => queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                }));
+
+                sw.Reset();
+                sw.Start();
+                workItem = queue.Dequeue(timeToWait);
+                workItem.Complete();
+                sw.Stop();
+                Trace.WriteLine(sw.Elapsed);
+                Assert.NotNull(workItem);
+            }
+        }
+
+        [Fact]
+        public void DequeueWaitWillGetSignaled() {
+            using (var queue = GetQueue()) {
+                queue.DeleteQueue();
+
+                Task.Factory.StartNewDelayed(250, () => GetQueue().Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                }));
+
+                var sw = new Stopwatch();
+                sw.Start();
+                var workItem = queue.Dequeue();
+                sw.Stop();
+                Trace.WriteLine(sw.Elapsed);
+                Assert.NotNull(workItem);
+                Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2));
+            }
         }
 
         [Fact]
         public void CanUseQueueWorker() {
-            var resetEvent = new AutoResetEvent(false);
-            var queue = new InMemoryQueue<SimpleWorkItem>();
-            queue.StartWorking(w => {
-                Assert.Equal("Hello", w.Value.Data);
-                w.CompleteAsync().Wait();
-                resetEvent.Set();
-            });
-            queue.EnqueueAsync(new SimpleWorkItem {
-                Data = "Hello"
-            });
+            using (var queue = GetQueue()) {
+                queue.DeleteQueue();
 
-            Assert.Equal(1, queue.Count);
-            bool success = resetEvent.WaitOne(250);
-            Assert.Equal(0, queue.Count);
-            Assert.Equal(1, queue.Completed);
-            Assert.True(success, "Failed to receive message.");
-            Assert.Equal(0, queue.WorkerErrors);
+                var resetEvent = new AutoResetEvent(false);
+                queue.StartWorking(w => {
+                    Assert.Equal("Hello", w.Value.Data);
+                    w.Complete();
+                    resetEvent.Set();
+                });
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+
+                resetEvent.WaitOne(TimeSpan.FromSeconds(5));
+                Assert.Equal(1, queue.CompletedCount);
+                Assert.Equal(0, queue.GetQueueCount());
+                Assert.Equal(0, queue.WorkerErrorCount);
+            }
+        }
+
+        [Fact]
+        public async Task CanHandleErrorInWorker() {
+            using (var queue = GetQueue(1, retryDelay: TimeSpan.Zero)) {
+                queue.DeleteQueue();
+
+                queue.StartWorking(w => {
+                    Debug.WriteLine("WorkAction");
+                    Assert.Equal("Hello", w.Value.Data);
+                    queue.StopWorking();
+                    throw new ApplicationException();
+                });
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+
+                var success = await TaskHelper.DelayUntil(() => queue.WorkerErrorCount > 0, TimeSpan.FromSeconds(5));
+                Assert.True(success);
+                Assert.Equal(0, queue.CompletedCount);
+                Assert.Equal(1, queue.WorkerErrorCount);
+
+                success = await TaskHelper.DelayUntil(() => queue.GetQueueCount() > 0, TimeSpan.FromSeconds(5));
+                Assert.True(success);
+                Assert.Equal(1, queue.GetQueueCount());
+            }
         }
 
         [Fact]
         public void WorkItemsWillTimeout() {
-            var queue = new InMemoryQueue<SimpleWorkItem>(workItemTimeoutMilliseconds: 10);
-            queue.EnqueueAsync(new SimpleWorkItem {
-                Data = "Hello"
-            });
-            var workItem = queue.DequeueAsync(0).Result;
-            Assert.Equal("Hello", workItem.Value.Data);
+            using (var queue = GetQueue(retryDelay: TimeSpan.Zero, workItemTimeout: TimeSpan.FromMilliseconds(50))) {
+                queue.DeleteQueue();
 
-            Assert.Equal(0, queue.Count);
-            // wait for the task to be auto abandoned
-            Task.Delay(100).Wait();
-            Assert.Equal(1, queue.Count);
-            Assert.Equal(1, queue.Abandoned);
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+                var workItem = queue.Dequeue(TimeSpan.Zero);
+                Assert.NotNull(workItem);
+                Assert.Equal("Hello", workItem.Value.Data);
+                Assert.Equal(0, queue.GetQueueCount());
+
+                // wait for the task to be auto abandoned
+                var sw = new Stopwatch();
+                sw.Start();
+                workItem = queue.Dequeue(TimeSpan.FromSeconds(5));
+                sw.Stop();
+                Trace.WriteLine(sw.Elapsed);
+                Assert.NotNull(workItem);
+                workItem.Complete();
+                Assert.Equal(0, queue.GetQueueCount());
+            }
         }
 
         [Fact]
         public void WorkItemsWillGetMovedToDeadletter() {
-            var queue = new InMemoryQueue<SimpleWorkItem>(retries: 1, workItemTimeoutMilliseconds: 10);
-            queue.EnqueueAsync(new SimpleWorkItem {
-                Data = "Hello"
-            });
-            var workItem = queue.DequeueAsync(0).Result;
-            Assert.Equal("Hello", workItem.Value.Data);
-            Assert.Equal(1, queue.Dequeued);
+            using (var queue = GetQueue(retryDelay: TimeSpan.Zero)) {
+                queue.DeleteQueue();
 
-            Assert.Equal(0, queue.Count);
-            // wait for the task to be auto abandoned
-            Task.Delay(100).Wait();
-            Assert.Equal(1, queue.Count);
-            Assert.Equal(1, queue.Abandoned);
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+                var workItem = queue.Dequeue(TimeSpan.Zero);
+                Assert.Equal("Hello", workItem.Value.Data);
+                Assert.Equal(1, queue.DequeuedCount);
 
-            // work item should be retried 1 time.
-            workItem = queue.DequeueAsync(0).Result;
-            Assert.Equal("Hello", workItem.Value.Data);
-            Assert.Equal(2, queue.Dequeued);
+                Assert.Equal(0, queue.GetQueueCount());
+                workItem.Abandon();
+                Assert.Equal(1, queue.AbandonedCount);
 
-            Task.Delay(100).Wait();
-            // work item should be moved to deadletter queue after retries.
-            Assert.Equal(1, queue.DeadletterCount);
-            Assert.Equal(2, queue.Abandoned);
+                // work item should be retried 1 time.
+                workItem = queue.Dequeue(TimeSpan.FromSeconds(5));
+                Assert.NotNull(workItem);
+                Assert.Equal("Hello", workItem.Value.Data);
+                Assert.Equal(2, queue.DequeuedCount);
+
+                workItem.Abandon();
+                // work item should be moved to deadletter _queue after retries.
+                Assert.Equal(1, queue.GetDeadletterCount());
+                Assert.Equal(2, queue.AbandonedCount);
+            }
         }
 
         [Fact]
         public void CanAutoCompleteWorker() {
-            var resetEvent = new AutoResetEvent(false);
-            var queue = new InMemoryQueue<SimpleWorkItem>(workItemTimeoutMilliseconds: 100);
-            queue.StartWorking(w => {
-                Assert.Equal("Hello", w.Value.Data);
-                resetEvent.Set();
-            }, true);
-            queue.EnqueueAsync(new SimpleWorkItem {
-                Data = "Hello"
-            });
+            using (var queue = GetQueue()) {
+                queue.DeleteQueue();
 
-            Assert.Equal(1, queue.Count);
-            bool success = resetEvent.WaitOne(100);
-            Assert.True(success, "Failed to receive message.");
-            Task.Delay(25).Wait();
-            Assert.Equal(0, queue.Count);
-            Assert.Equal(1, queue.Completed);
-            Assert.Equal(0, queue.WorkerErrors);
+                var resetEvent = new AutoResetEvent(false);
+                queue.StartWorking(w => {
+                    Assert.Equal("Hello", w.Value.Data);
+                    resetEvent.Set();
+                }, true);
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+
+                Assert.Equal(1, queue.EnqueuedCount);
+                resetEvent.WaitOne(TimeSpan.FromSeconds(5));
+                Thread.Sleep(50);
+                Assert.Equal(0, queue.GetQueueCount());
+                Assert.Equal(1, queue.CompletedCount);
+                Assert.Equal(0, queue.WorkerErrorCount);
+            }
         }
 
         [Fact]
-        public void CanHaveMultipleWorkers() {
-            const int workItemCount = 50;
-            var latch = new CountDownLatch(workItemCount);
-            int errorCount = 0;
-            int abandonCount = 0;
-            var queue = new InMemoryQueue<SimpleWorkItem>(retries: 1, workItemTimeoutMilliseconds: 50);
-            Task.Factory.StartNew(() => queue.StartWorking(w => DoWork(w, latch, ref abandonCount, ref errorCount)));
-            Task.Factory.StartNew(() => queue.StartWorking(w => DoWork(w, latch, ref abandonCount, ref errorCount)));
-            Task.Factory.StartNew(() => queue.StartWorking(w => DoWork(w, latch, ref abandonCount, ref errorCount)));
+        public void CanHaveMultipleQueueInstances() {
+            using (var queue = GetQueue(retries: 0, retryDelay: TimeSpan.Zero)) {
+                Debug.WriteLine(String.Format("Queue Id: {0}", queue.QueueId));
+                queue.DeleteQueue();
 
-            Parallel.For(0, workItemCount, i => queue.EnqueueAsync(new SimpleWorkItem {
-                Data = "Hello",
-                Id = i
-            }));
+                const int workItemCount = 10;
+                const int workerCount = 3;
+                var latch = new CountdownEvent(workItemCount);
+                var info = new WorkInfo();
+                var workers = new List<IQueue<SimpleWorkItem>> { queue };
 
-            bool success = latch.Wait(1500);
-            Assert.True(success, "Failed to receive all work items.");
-            Task.Delay(50).Wait();
-            Assert.Equal(workItemCount, queue.Completed + queue.DeadletterCount);
-            Assert.Equal(errorCount, queue.WorkerErrors);
-            Assert.Equal(abandonCount + errorCount, queue.Abandoned);
+                for (int i = 0; i < workerCount; i++) {
+                    var q = GetQueue(retries: 0, retryDelay: TimeSpan.Zero);
+                    Debug.WriteLine(String.Format("Queue Id: {0}", q.QueueId));
+                    q.StartWorking(w => DoWork(w, latch, info));
+                    workers.Add(q);
+                }
+
+                Parallel.For(0, workItemCount, i => {
+                    var id = queue.Enqueue(new SimpleWorkItem {
+                        Data = "Hello",
+                        Id = i
+                    });
+                    Debug.WriteLine("Enqueued Index: {0} Id: {1}", i, id);
+                });
+
+                Assert.True(latch.Wait(TimeSpan.FromSeconds(10)));
+                Debug.WriteLine("Completed: {0} Abandoned: {1} Error: {2}", info.CompletedCount, info.AbandonCount, info.ErrorCount);
+                for (int i = 0; i < workers.Count; i++)
+                    Debug.WriteLine("Worker#{0} Completed: {1} Abandoned: {2} Error: {3}", i, workers[i].CompletedCount, workers[i].AbandonedCount, workers[i].WorkerErrorCount);
+
+                Assert.Equal(workItemCount, info.CompletedCount + info.AbandonCount + info.ErrorCount);
+
+                // In memory queue doesn't share state.
+                if (queue.GetType() == typeof(InMemoryQueue<SimpleWorkItem>)) {
+                    Assert.Equal(info.CompletedCount, queue.CompletedCount);
+                    Assert.Equal(info.AbandonCount, queue.AbandonedCount - queue.WorkerErrorCount);
+                    Assert.Equal(info.ErrorCount, queue.WorkerErrorCount);
+                } else {
+                    Assert.Equal(info.CompletedCount, workers.Sum(q => q.CompletedCount));
+                    Assert.Equal(info.AbandonCount, workers.Sum(q => q.AbandonedCount) - workers.Sum(q => q.WorkerErrorCount));
+                    Assert.Equal(info.ErrorCount, workers.Sum(q => q.WorkerErrorCount));
+                }
+
+                workers.ForEach(w => w.Dispose());
+            }
         }
 
-        private void DoWork(QueueEntry<SimpleWorkItem> w, CountDownLatch latch, ref int abandonCount, ref int errorCount) {
-            Assert.Equal("Hello", w.Value.Data);
-            latch.Signal();
+        [Fact]
+        public void CanDelayRetry() {
+            using (var queue = GetQueue(workItemTimeout: TimeSpan.FromMilliseconds(50), retryDelay: TimeSpan.FromSeconds(1))) {
+                queue.DeleteQueue();
 
-            // randomly complete, abandon or blowup.
-            if (RandomHelper.GetBool()) {
-                Console.WriteLine("Completing: {0}", w.Value.Id);
-                w.CompleteAsync().Wait();
-            } else if (RandomHelper.GetBool()) {
-                Console.WriteLine("Abandoning: {0}", w.Value.Id);
-                w.AbandonAsync();
-                Interlocked.Increment(ref abandonCount);
-            } else {
-                Console.WriteLine("Erroring: {0}", w.Value.Id);
-                Interlocked.Increment(ref errorCount);
-                throw new ApplicationException();
+                queue.Enqueue(new SimpleWorkItem {
+                    Data = "Hello"
+                });
+
+                var workItem = queue.Dequeue(TimeSpan.Zero);
+                Assert.NotNull(workItem);
+                Assert.Equal("Hello", workItem.Value.Data);
+                Assert.Equal(0, queue.GetQueueCount());
+
+                // wait for the task to be auto abandoned
+                var sw = new Stopwatch();
+                sw.Start();
+
+                workItem.Abandon();
+                Assert.Equal(1, queue.AbandonedCount);
+
+                workItem = queue.Dequeue(TimeSpan.FromSeconds(5));
+                sw.Stop();
+                Trace.WriteLine(sw.Elapsed);
+                Assert.NotNull(workItem);
+                Assert.True(sw.Elapsed > TimeSpan.FromSeconds(1));
+                workItem.Complete();
+                Assert.Equal(0, queue.GetQueueCount());
             }
+        }
+
+        private void DoWork(QueueEntry<SimpleWorkItem> w, CountdownEvent latch, WorkInfo info) {
+            Debug.WriteLine("Starting: {0}", w.Value.Id);
+            Assert.Equal("Hello", w.Value.Data);
+
+            try {
+                // randomly complete, abandon or blowup.
+                if (RandomHelper.GetBool()) {
+                    Debug.WriteLine("Completing: {0}", w.Value.Id);
+                    w.Complete();
+                    info.IncrementCompletedCount();
+                } else if (RandomHelper.GetBool()) {
+                    Debug.WriteLine("Abandoning: {0}", w.Value.Id);
+                    w.Abandon();
+                    info.IncrementAbandonCount();
+                } else {
+                    Debug.WriteLine("Erroring: {0}", w.Value.Id);
+                    info.IncrementErrorCount();
+                    throw new ApplicationException();
+                }
+            } finally {
+                latch.Signal();
+            }
+        }
+    }
+
+    public class WorkInfo {
+        private int _abandonCount = 0;
+        private int _errorCount = 0;
+        private int _completedCount = 0;
+
+        public int AbandonCount { get { return _abandonCount; } }
+        public int ErrorCount { get { return _errorCount; } }
+        public int CompletedCount { get { return _completedCount; } }
+
+        public void IncrementAbandonCount() {
+            Interlocked.Increment(ref _abandonCount);
+        }
+
+        public void IncrementErrorCount() {
+            Interlocked.Increment(ref _errorCount);
+        }
+
+        public void IncrementCompletedCount() {
+            Interlocked.Increment(ref _completedCount);
         }
     }
 }

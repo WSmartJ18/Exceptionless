@@ -11,6 +11,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Threading.Tasks;
 using Exceptionless;
@@ -18,9 +19,6 @@ using Exceptionless.Api;
 using Exceptionless.Core;
 using Exceptionless.Core.AppStats;
 using Exceptionless.Core.Extensions;
-using Exceptionless.Core.Models;
-using Exceptionless.Core.Queues;
-using Exceptionless.Core.Queues.Models;
 using Exceptionless.Core.Repositories;
 using Exceptionless.Core.Utility;
 using Exceptionless.Models;
@@ -28,8 +26,11 @@ using Exceptionless.Models.Data;
 using Exceptionless.Serializer;
 using Exceptionless.Submission;
 using Microsoft.Owin.Hosting;
+using Nest;
 using SimpleInjector;
 using Xunit;
+using Exceptionless.Core.Queues;
+using Exceptionless.Core.Queues.Models;
 
 namespace Client.Tests.Submission {
     public class DefaultSubmissionClientTests {
@@ -47,7 +48,7 @@ namespace Client.Tests.Submission {
             var container = AppBuilder.CreateContainer();
             using (WebApp.Start(Settings.Current.BaseURL, app => AppBuilder.BuildWithContainer(app, container, false))) {
                 EnsureSampleData(container);
-                
+
                 var events = new List<Event> { new Event { Message = "Testing" } };
                 var configuration = GetClient().Configuration;
                 var serializer = new DefaultJsonSerializer();
@@ -59,13 +60,19 @@ namespace Client.Tests.Submission {
             }
         }
 
-        [Fact(Skip="TODO: Fix a serialization issue that is causing this test to fail.")]
-        public void PostUserDescription() {
+        [Fact(Skip="Flakey, need a better way to test this")]
+        public async Task PostUserDescription() {
             var container = AppBuilder.CreateContainer();
             using (WebApp.Start(Settings.Current.BaseURL, app => AppBuilder.BuildWithContainer(app, container, false))) {
+                var repository = container.GetInstance<IEventRepository>();
+                repository.RemoveAll();
+
                 const string referenceId = "fda94ff32921425ebb08b73df1d1d34c";
+                const string badReferenceId = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz";
 
                 var statsCounter = container.GetInstance<IAppStatsClient>() as InMemoryAppStatsClient;
+                var descQueue = container.GetInstance<IQueue<EventUserDescription>>() as InMemoryQueue<EventUserDescription>;
+
                 Assert.NotNull(statsCounter);
 
                 EnsureSampleData(container);
@@ -76,29 +83,43 @@ namespace Client.Tests.Submission {
 
                 var client = new DefaultSubmissionClient();
                 var description = new UserDescription { EmailAddress = "test@noreply.com", Description = "Some description." };
-                var response = client.PostUserDescription(referenceId, description, configuration, serializer);
-                Assert.True(response.Success, response.Message);
-                Assert.Null(response.Message);
+                Debug.WriteLine("Before Submit Description");
+                statsCounter.DisplayStats();
+                Assert.True(statsCounter.WaitForCounter(StatNames.EventsUserDescriptionErrors, work: () => {
+                    var response = client.PostUserDescription(referenceId, description, configuration, serializer);
+                    Debug.WriteLine("After Submit Description");
+                    Assert.True(response.Success, response.Message);
+                    Assert.Null(response.Message);
+                }));
+                statsCounter.DisplayStats();
+                Debug.WriteLine(descQueue.GetQueueCount());
 
-                response = client.PostEvents(events, configuration, serializer);
-                Assert.True(response.Success, response.Message);
-                Assert.Null(response.Message);
+                Debug.WriteLine("Before Post Event");
+                Assert.True(statsCounter.WaitForCounter(StatNames.EventsProcessed, work: () => {
+                    var response = client.PostEvents(events, configuration, serializer);
+                    Debug.WriteLine("After Post Event");
+                    Assert.True(response.Success, response.Message);
+                    Assert.Null(response.Message);
+                }));
+                statsCounter.DisplayStats();
+                if (statsCounter.GetCount(StatNames.EventsUserDescriptionProcessed) == 0)
+                    Assert.True(statsCounter.WaitForCounter(StatNames.EventsUserDescriptionProcessed));
 
-                statsCounter.WaitForCounter(StatNames.EventsUserDescriptionProcessed, 1);
-
-                var eventRepository = container.GetInstance<IEventRepository>();
-                var ev = eventRepository.GetByReferenceId("537650f3b77efe23a47914f4", referenceId).FirstOrDefault();
+                container.GetInstance<IElasticClient>().Refresh();
+                var ev = repository.GetByReferenceId("537650f3b77efe23a47914f4", referenceId).FirstOrDefault();
                 Assert.NotNull(ev);
                 Assert.NotNull(ev.GetUserDescription());
                 Assert.Equal(description.ToJson(), ev.GetUserDescription().ToJson());
 
-                Assert.Equal(0, statsCounter.GetCount(StatNames.EventsUserDescriptionErrors));
-                response = client.PostUserDescription(referenceId + 1, description, configuration, serializer);
-                Assert.True(response.Success, response.Message);
-                Assert.Null(response.Message);
+                Assert.InRange(statsCounter.GetCount(StatNames.EventsUserDescriptionErrors), 1, 5);
+                Assert.True(statsCounter.WaitForCounter(StatNames.EventsUserDescriptionErrors, work: () => {
+                    var response = client.PostUserDescription(badReferenceId, description, configuration, serializer);
+                    Assert.True(response.Success, response.Message);
+                    Assert.Null(response.Message);
+                }));
+                statsCounter.DisplayStats();
 
-                statsCounter.WaitForCounter(StatNames.EventsUserDescriptionErrors, 1);
-                Assert.Equal(1, statsCounter.GetCount(StatNames.EventsUserDescriptionErrors));
+                Assert.InRange(statsCounter.GetCount(StatNames.EventsUserDescriptionErrors), 2, 10);
             }
         }
 
@@ -107,7 +128,7 @@ namespace Client.Tests.Submission {
             var container = AppBuilder.CreateContainer();
             using (WebApp.Start(Settings.Current.BaseURL, app => AppBuilder.BuildWithContainer(app, container, false))) {
                 EnsureSampleData(container);
-                
+
                 var configuration = GetClient().Configuration;
                 var serializer = new DefaultJsonSerializer();
 
@@ -125,7 +146,7 @@ namespace Client.Tests.Submission {
             var userRepository = container.GetInstance<IUserRepository>();
             var user = userRepository.GetByEmailAddress("test@test.com");
             if (user == null)
-                user = userRepository.Add(new User { FullName = "Test User", EmailAddress = "test@test.com", VerifyEmailAddressToken = Guid.NewGuid().ToString(), VerifyEmailAddressTokenExpiration = DateTime.MaxValue});
+                user = userRepository.Add(new User { FullName = "Test User", EmailAddress = "test@test.com", VerifyEmailAddressToken = Guid.NewGuid().ToString(), VerifyEmailAddressTokenExpiration = DateTime.MaxValue });
             dataHelper.CreateSampleOrganizationAndProject(user.Id);
         }
     }

@@ -39,40 +39,24 @@
     <NoWarn>1591</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <Reference Include="AutoMapper, Version=3.3.0.0, Culture=neutral, PublicKeyToken=be96cd2c38ef1005, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\packages\AutoMapper.3.3.0\lib\net40\AutoMapper.dll</HintPath>
+    </Reference>
+    <Reference Include="AutoMapper.Net4, Version=3.3.0.0, Culture=neutral, PublicKeyToken=be96cd2c38ef1005, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\packages\AutoMapper.3.3.0\lib\net40\AutoMapper.Net4.dll</HintPath>
+    </Reference>
     <Reference Include="Elasticsearch.Net, Version=1.0.0.0, Culture=neutral, PublicKeyToken=96c599bbe3e70f5d, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\Elasticsearch.Net.1.0.1\lib\Elasticsearch.Net.dll</HintPath>
+      <HintPath>..\..\packages\Elasticsearch.Net.1.3.0\lib\Elasticsearch.Net.dll</HintPath>
+    </Reference>
+    <Reference Include="Exceptionless.DateTimeExtensions, Version=3.0.26.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\packages\Exceptionless.DateTimeExtensions.3.0.26\lib\portable-net40+win+wpa81\Exceptionless.DateTimeExtensions.dll</HintPath>
     </Reference>
     <Reference Include="FluentValidation">
-      <HintPath>..\..\packages\FluentValidation.5.4.0.0\lib\Net40\FluentValidation.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.ApplicationServer.Caching.AzureClientHelper, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.ApplicationServer.Caching.AzureClientHelper.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.ApplicationServer.Caching.AzureCommon, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.ApplicationServer.Caching.AzureCommon.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.ApplicationServer.Caching.Client, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.ApplicationServer.Caching.Client.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.ApplicationServer.Caching.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.ApplicationServer.Caching.Core.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.ServiceBus, Version=2.4.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\WindowsAzure.ServiceBus.2.4.2.0\lib\net40-full\Microsoft.ServiceBus.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.Web.DistributedCache, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.Web.DistributedCache.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.WindowsAzure.Configuration, Version=2.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.ConfigurationManager.2.0.3\lib\net40\Microsoft.WindowsAzure.Configuration.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.WindowsFabric.Common, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.WindowsFabric.Common.dll</HintPath>
-    </Reference>
-    <Reference Include="Microsoft.WindowsFabric.Data.Common, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.WindowsAzure.Caching.2.4.0.0\lib\net40-full\Microsoft.WindowsFabric.Data.Common.dll</HintPath>
+      <HintPath>..\..\packages\FluentValidation.5.5.0.0\lib\Net40\FluentValidation.dll</HintPath>
     </Reference>
     <Reference Include="MongoDB.Bson, Version=1.9.2.235, Culture=neutral, PublicKeyToken=f686731cfb9cc103, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
@@ -84,12 +68,19 @@
     </Reference>
     <Reference Include="Nest, Version=1.0.0.0, Culture=neutral, PublicKeyToken=96c599bbe3e70f5d, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\NEST.1.0.1\lib\Nest.dll</HintPath>
-      <Private>True</Private>
+      <HintPath>..\..\packages\NEST.1.3.0\lib\Nest.dll</HintPath>
     </Reference>
     <Reference Include="Newtonsoft.Json, Version=6.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\Newtonsoft.Json.6.0.4\lib\net45\Newtonsoft.Json.dll</HintPath>
+      <HintPath>..\..\packages\Newtonsoft.Json.6.0.6\lib\net45\Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="Nito.AsyncEx">
+      <HintPath>..\..\packages\Nito.AsyncEx.3.0.0\lib\net45\Nito.AsyncEx.dll</HintPath>
+    </Reference>
+    <Reference Include="Nito.AsyncEx.Concurrent">
+      <HintPath>..\..\packages\Nito.AsyncEx.3.0.0\lib\net45\Nito.AsyncEx.Concurrent.dll</HintPath>
+    </Reference>
+    <Reference Include="Nito.AsyncEx.Enlightenment">
+      <HintPath>..\..\packages\Nito.AsyncEx.3.0.0\lib\net45\Nito.AsyncEx.Enlightenment.dll</HintPath>
     </Reference>
     <Reference Include="NLog, Version=3.1.0.0, Culture=neutral, PublicKeyToken=5120e14c03d0593c, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
@@ -98,33 +89,32 @@
     <Reference Include="NLog.Xml">
       <HintPath>..\..\packages\NLog.Xml.3.1.0.30\lib\net45\NLog.Xml.dll</HintPath>
     </Reference>
-    <Reference Include="RazorEngine">
-      <HintPath>..\..\packages\RazorEngine.3.4.1\lib\net45\RazorEngine.dll</HintPath>
-    </Reference>
-    <Reference Include="SimpleInjector, Version=2.5.2.0, Culture=neutral, PublicKeyToken=984cb50dea722e99, processorArchitecture=MSIL">
+    <Reference Include="RazorEngine, Version=3.5.0.0, Culture=neutral, PublicKeyToken=9ee697374c7e744a, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\SimpleInjector.2.5.2\lib\net45\SimpleInjector.dll</HintPath>
+      <HintPath>..\..\packages\RazorEngine.3.4.2\lib\net45\RazorEngine.dll</HintPath>
     </Reference>
-    <Reference Include="SimpleInjector.Diagnostics, Version=2.5.2.0, Culture=neutral, PublicKeyToken=984cb50dea722e99, processorArchitecture=MSIL">
-      <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\SimpleInjector.2.5.2\lib\net45\SimpleInjector.Diagnostics.dll</HintPath>
+    <Reference Include="SimpleInjector">
+      <HintPath>..\..\packages\SimpleInjector.2.6.1\lib\net45\SimpleInjector.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="SimpleInjector.Packaging, Version=2.5.2.0, Culture=neutral, PublicKeyToken=984cb50dea722e99, processorArchitecture=MSIL">
+    <Reference Include="SimpleInjector.Diagnostics, Version=2.6.1.0, Culture=neutral, PublicKeyToken=984cb50dea722e99, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\SimpleInjector.Packaging.2.5.2\lib\net40-client\SimpleInjector.Packaging.dll</HintPath>
+      <HintPath>..\..\packages\SimpleInjector.2.6.1\lib\net45\SimpleInjector.Diagnostics.dll</HintPath>
+    </Reference>
+    <Reference Include="SimpleInjector.Packaging">
+      <HintPath>..\..\packages\SimpleInjector.Packaging.2.6.1\lib\net40-client\SimpleInjector.Packaging.dll</HintPath>
     </Reference>
     <Reference Include="StackExchange.Redis, Version=1.0.316.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\StackExchange.Redis.1.0.322\lib\net45\StackExchange.Redis.dll</HintPath>
+      <HintPath>..\..\packages\StackExchange.Redis.1.0.371\lib\net45\StackExchange.Redis.dll</HintPath>
     </Reference>
-    <Reference Include="StatsdClient, Version=1.2.1.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="StatsdClient, Version=1.3.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\StatsdCsharpClient.1.2.1.0\lib\net45\StatsdClient.dll</HintPath>
+      <HintPath>..\..\packages\StatsdCsharpClient.1.3.0.0\lib\net45\StatsdClient.dll</HintPath>
     </Reference>
-    <Reference Include="Stripe.net, Version=2.2.6.0, Culture=neutral, processorArchitecture=MSIL">
+    <Reference Include="Stripe.net, Version=2.3.4.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\..\packages\Stripe.net.2.2.6\lib\net40\Stripe.net.dll</HintPath>
+      <HintPath>..\..\packages\Stripe.net.2.3.4\lib\net40\Stripe.net.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Configuration" />
@@ -134,7 +124,8 @@
     <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.ServiceModel" />
     <Reference Include="System.Web.Razor, Version=3.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\..\packages\Microsoft.AspNet.Razor.3.2.0\lib\net45\System.Web.Razor.dll</HintPath>
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>..\..\packages\Microsoft.AspNet.Razor.3.2.2\lib\net45\System.Web.Razor.dll</HintPath>
     </Reference>
     <Reference Include="System.Xml.Linq" />
     <Reference Include="System.Data.DataSetExtensions" />
@@ -150,13 +141,32 @@
     <Compile Include="Authorization\AuthorizationRoles.cs" />
     <Compile Include="Billing\BillingManager.cs" />
     <Compile Include="Billing\StripeEventHandler.cs" />
-    <Compile Include="Caching\AzureCacheClient.cs" />
     <Compile Include="Caching\ICacheClient.cs" />
     <Compile Include="Caching\InMemoryCacheClient.cs" />
     <Compile Include="AppStats\StatNames.cs" />
     <Compile Include="AppStats\AppStatsClient.cs" />
     <Compile Include="AppStats\IAppStatsClient.cs" />
     <Compile Include="Bootstrapper.cs" />
+    <Compile Include="Caching\RedisCacheClient.cs" />
+    <Compile Include="Extensions\ElasticSearchExtensions.cs" />
+    <Compile Include="Jobs\JobResult.cs" />
+    <Compile Include="Lock\DisposableLock.cs" />
+    <Compile Include="Lock\ILockProvider.cs" />
+    <Compile Include="Jobs\JobBase.cs" />
+    <Compile Include="Messaging\MessageBusData.cs" />
+    <Compile Include="Messaging\RedisMessageBus.cs" />
+    <Compile Include="Migrations\v1.0.34.cs" />
+    <Compile Include="Plugins\Formatting\Default\60_LogFormattingPlugin.cs" />
+    <Compile Include="Queues\RedisQueue.cs" />
+    <Compile Include="Repositories\Base\SortOrder.cs" />
+    <Compile Include="Utility\EventStats.cs" />
+    <Compile Include="Extensions\RequestInfoExtensions.cs" />
+    <Compile Include="Mail\IMailSender.cs" />
+    <Compile Include="Mail\InMemoryMailSender.cs" />
+    <Compile Include="Mail\SmtpMailSender.cs" />
+    <Compile Include="Plugins\EventProcessor\Default\40_RequestInfoPlugin.cs" />
+    <Compile Include="Repositories\Base\DocumentNotFoundException.cs" />
+    <Compile Include="Serialization\EmptyCollectionElasticContractResolver.cs" />
     <Compile Include="Extensions\MailerExtensions.cs" />
     <Compile Include="Extensions\MongoQueryExtensions.cs" />
     <Compile Include="Extensions\ValidationExtensions.cs" />
@@ -170,7 +180,6 @@
     <Compile Include="Messaging\Models\PlanChanged.cs" />
     <Compile Include="Messaging\Models\PlanOverage.cs" />
     <Compile Include="Messaging\Models\StackUpdated.cs" />
-    <Compile Include="Messaging\ServiceBusMessageBus.cs" />
     <Compile Include="Migrations\v1.0.29.cs" />
     <Compile Include="Migrations\v1.0.30.cs" />
     <Compile Include="Migrations\v1.0.33.cs" />
@@ -180,7 +189,7 @@
     <Compile Include="Models\Organization\InvoiceModel.cs" />
     <Compile Include="Models\StackSummaryModel.cs" />
     <Compile Include="Models\SummaryData.cs" />
-    <Compile Include="Pipeline\001_DiscardEventsOutsideOfRetentionAction.cs" />
+    <Compile Include="Pipeline\001_CheckEventDateAction.cs" />
     <Compile Include="Pipeline\006_TruncateFieldsAction.cs" />
     <Compile Include="Plugins\EventParser\Default\FallbackEventParserPlugin.cs" />
     <Compile Include="Plugins\EventParser\Default\LegacyErrorParserPlugin.cs" />
@@ -230,8 +239,7 @@
     <Compile Include="Jobs\ProcessEventPostsJob.cs" />
     <Compile Include="Jobs\RemoveStaleAccountsJob.cs" />
     <Compile Include="Jobs\EnforceRetentionLimitsJob.cs" />
-    <Compile Include="Jobs\MongoJobHistoryProvider.cs" />
-    <Compile Include="Jobs\CacheJobLockProvider.cs" />
+    <Compile Include="Lock\CacheLockProvider.cs" />
     <Compile Include="Queues\Models\EventUserDescription.cs" />
     <Compile Include="Queues\Models\MailMessage.cs" />
     <Compile Include="Repositories\Base\DuplicateDocumentException.cs" />
@@ -245,18 +253,12 @@
     <Compile Include="Repositories\Base\ElasticSearchRepositoryOwnedByOrganizationAndProject.cs" />
     <Compile Include="Repositories\Base\ElasticSearchRepositoryOwnedByOrganization.cs" />
     <Compile Include="Repositories\Base\ElasticSearchRepositoryOwnedByOrganizationAndProjectAndStack.cs" />
-    <Compile Include="Repositories\Base\PagingWtihBeforeAfterSortByOptions.cs" />
+    <Compile Include="Repositories\Base\PagingWitSortByOptions.cs" />
     <Compile Include="Repositories\EventRepository.cs" />
     <Compile Include="Serialization\DataObjectConverter.cs" />
     <Compile Include="Validation\ApplicationValidator.cs" />
-    <Compile Include="Validation\DayProjectStatsValidator.cs" />
-    <Compile Include="Validation\DayStackStatsValidator.cs" />
     <Compile Include="Validation\EventValidator.cs" />
     <Compile Include="Validation\IsObjectIdValidator.cs" />
-    <Compile Include="Validation\JobHistoryValidator.cs" />
-    <Compile Include="Validation\JobLockInfoValidator.cs" />
-    <Compile Include="Validation\MonthProjectStatsValidator.cs" />
-    <Compile Include="Validation\MonthStackStatsValidator.cs" />
     <Compile Include="Validation\OrganizationValidator.cs" />
     <Compile Include="Validation\PersistentEventValidator.cs" />
     <Compile Include="Validation\ProjectValidator.cs" />
@@ -299,7 +301,6 @@
     <Compile Include="Queues\IQueue.cs" />
     <Compile Include="Queues\Models\WebHookNotification.cs" />
     <Compile Include="Queues\Models\WorkItem.cs" />
-    <Compile Include="Queues\ServiceBusQueue.cs" />
     <Compile Include="Queues\Models\SummaryNotification.cs" />
     <Compile Include="Queues\QueueEntry.cs" />
     <Compile Include="Repositories\ApplicationRepository.cs" />
@@ -310,10 +311,6 @@
     <Compile Include="Repositories\Base\IRepositoryOwnedByStack.cs" />
     <Compile Include="Repositories\Base\IRepositoryOwnedByProject.cs" />
     <Compile Include="Repositories\Base\MongoRepositoryOwnedByOrganizationAndProject.cs" />
-    <Compile Include="Repositories\Base\MongoRepositoryOwnedByOrganizationAndProjectAndStack.cs" />
-    <Compile Include="Repositories\Base\MongoRepositoryOwnedByProjectAndStack.cs" />
-    <Compile Include="Repositories\Base\MongoRepositoryOwnedByStack.cs" />
-    <Compile Include="Repositories\Base\MongoRepositoryOwnedByProject.cs" />
     <Compile Include="Repositories\Base\MongoRepositoryOwnedByOrganization.cs" />
     <Compile Include="Repositories\Base\PagingOptions.cs" />
     <Compile Include="Repositories\Base\PagingOptionsExtensions.cs" />
@@ -322,17 +319,13 @@
     <Compile Include="Repositories\Base\QueryOptions.cs" />
     <Compile Include="Repositories\Base\RepositoryConstants.cs" />
     <Compile Include="Repositories\Interfaces\IApplicationRepository.cs" />
-    <Compile Include="Repositories\Interfaces\IDayProjectStatsRepository.cs" />
-    <Compile Include="Repositories\Interfaces\IDayStackStatsRepository.cs" />
     <Compile Include="Repositories\Interfaces\ITokenRepository.cs" />
-    <Compile Include="Repositories\Interfaces\IMonthStackStatsRepository.cs" />
-    <Compile Include="Repositories\Interfaces\IMonthProjectStatsRepository.cs" />
     <Compile Include="Repositories\Interfaces\IWebHookRepository.cs" />
     <Compile Include="Repositories\Base\MongoRepositoryManager.cs" />
     <Compile Include="Repositories\TokenRepository.cs" />
     <Compile Include="Repositories\WebHookRepository.cs" />
     <Compile Include="AppStats\InMemoryAppStatsClient.cs" />
-    <Compile Include="Serialization\ConditionalContractResolver.cs" />
+    <Compile Include="Serialization\ExceptionlessContractResolver.cs" />
     <Compile Include="Serialization\DataDictionaryConverter.cs" />
     <Compile Include="Serialization\JsonTextWriterWithDepth.cs" />
     <Compile Include="Serialization\LowerCaseUnderscorePropertyNamesContractResolver.cs" />
@@ -365,10 +358,7 @@
     <Compile Include="Pipeline\040_SaveEventAction.cs" />
     <Compile Include="Pipeline\060_UpdateStatsAction.cs" />
     <Compile Include="Queues\Models\EventNotification.cs" />
-    <Compile Include="Repositories\Interfaces\IJobHistoryRepository.cs" />
-    <Compile Include="Repositories\JobHistoryRepository.cs" />
     <Compile Include="Repositories\Base\IRepositoryOwnedByOrganization.cs" />
-    <Compile Include="Repositories\Interfaces\IJobLockRepository.cs" />
     <Compile Include="Repositories\Interfaces\IOrganizationRepository.cs" />
     <Compile Include="Repositories\Interfaces\IEventRepository.cs" />
     <Compile Include="Utility\ExtensibleObject.cs" />
@@ -378,14 +368,6 @@
     <Compile Include="Repositories\Base\IMongoRepositoryManagement.cs" />
     <Compile Include="Repositories\Interfaces\IProjectRepository.cs" />
     <Compile Include="Utility\ErrorSignature.cs" />
-    <Compile Include="Jobs\JobLockInfo.cs" />
-    <Compile Include="Jobs\MongoJobLockProvider.cs" />
-    <Compile Include="Jobs\MongoMachineJobLockProvider.cs" />
-    <Compile Include="Utility\EventStatsHelper.cs" />
-    <Compile Include="Repositories\DayProjectStatsRepository.cs" />
-    <Compile Include="Repositories\MonthProjectStatsRepository.cs" />
-    <Compile Include="Repositories\MonthStackStatsRepository.cs" />
-    <Compile Include="Repositories\DayStackStatsRepository.cs" />
     <Compile Include="Repositories\Base\IReadOnlyRepository.cs" />
     <Compile Include="Repositories\Base\MongoReadOnlyRepository.cs" />
     <Compile Include="Repositories\Base\IRepository.cs" />
@@ -393,7 +375,6 @@
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Repositories\StackRepository.cs" />
     <Compile Include="Repositories\OrganizationRepository.cs" />
-    <Compile Include="Repositories\JobLockRepository.cs" />
     <Compile Include="Repositories\ProjectRepository.cs" />
     <Compile Include="Repositories\UserRepository.cs" />
   </ItemGroup>
@@ -499,6 +480,6 @@
     <Compile Include="Migrations\v1.0.28.cs" />
     <None Include="packages.config" />
   </ItemGroup>
-  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+  <Import Project="..\..\packages\AutoMapper.3.3.0\tools\AutoMapper.targets" Condition="Exists('..\..\packages\AutoMapper.3.3.0\tools\AutoMapper.targets')" />
 </Project>

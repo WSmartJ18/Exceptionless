@@ -10,14 +10,14 @@ using Xunit;
 namespace Exceptionless.Api.Tests.Repositories {
     public class ElasticSearchRepositoryTests {
         public readonly IEventRepository _repository = IoC.GetInstance<IEventRepository>();
-        private readonly ElasticClient _client = IoC.GetInstance<ElasticClient>();
+        private readonly IElasticClient _client = IoC.GetInstance<IElasticClient>();
 
         [Fact]
         public void CanCreateUpdateRemove() {
             _repository.RemoveAll();
             Assert.Equal(0, _repository.Count());
 
-            var ev = EventData.GenerateEvent(generateId: false, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId, occurrenceDate: DateTime.Now, nestingLevel: 5, minimiumNestingLevel: 1);
+            var ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId, occurrenceDate: DateTime.Now);
             Assert.Null(ev.Id);
 
             _repository.Add(ev);
@@ -39,9 +39,9 @@ namespace Exceptionless.Api.Tests.Repositories {
             Assert.Equal(0, _repository.Count());
 
             _repository.Add(new[] {
-                EventData.GenerateEvent(id: TestConstants.EventId2, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId, occurrenceDate: DateTime.Now, nestingLevel: 5, minimiumNestingLevel: 1),
-                EventData.GenerateEvent(id: TestConstants.EventId3, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId2, occurrenceDate: DateTime.Now, nestingLevel: 5, minimiumNestingLevel: 1),
-                EventData.GenerateEvent(id: TestConstants.EventId4, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId2, occurrenceDate: DateTime.Now, nestingLevel: 5, minimiumNestingLevel: 1)
+                EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId, occurrenceDate: DateTime.Now),
+                EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId2, occurrenceDate: DateTime.Now),
+                EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId2, occurrenceDate: DateTime.Now)
             });
 
             _client.Refresh();
@@ -50,11 +50,11 @@ namespace Exceptionless.Api.Tests.Repositories {
             Assert.NotNull(events);
             Assert.Equal(1, events.Count);
 
-            var events2 = _repository.GetByStackId(TestConstants.StackId2, new PagingOptions().WithPage(1).WithLimit(1));
+            var events2 = _repository.GetByStackId(TestConstants.StackId2, new PagingOptions().WithPage(2).WithLimit(1));
             Assert.NotNull(events);
             Assert.Equal(1, events.Count);
 
-            Assert.NotEqual(events.First(), events2.First());
+            Assert.NotEqual(events.First().Id, events2.First().Id);
 
             events = _repository.GetByStackId(TestConstants.StackId2);
             Assert.NotNull(events);
@@ -65,14 +65,13 @@ namespace Exceptionless.Api.Tests.Repositories {
             _repository.RemoveAll();
         }
 
-        
         [Fact]
         public void CanAddAndGetByCached() {
             var cache = IoC.GetInstance<ICacheClient>() as InMemoryCacheClient;
             Assert.NotNull(cache);
             cache.FlushAll();
 
-            var ev = EventData.GenerateEvent(generateId: false, projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId, occurrenceDate: DateTime.Now, nestingLevel: 5, minimiumNestingLevel: 1);
+            var ev = EventData.GenerateEvent(projectId: TestConstants.ProjectId, organizationId: TestConstants.OrganizationId, stackId: TestConstants.StackId, occurrenceDate: DateTime.Now);
             Assert.Null(ev.Id);
 
             Assert.Equal(0, cache.Count);

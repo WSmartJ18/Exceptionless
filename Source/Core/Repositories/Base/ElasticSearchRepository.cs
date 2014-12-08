@@ -12,17 +12,15 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Threading.Tasks;
 using CodeSmith.Core.Extensions;
 using Elasticsearch.Net;
 using Exceptionless.Core.Caching;
 using Exceptionless.Core.Messaging;
 using Exceptionless.Core.Messaging.Models;
-using Exceptionless.Core.Repositories.Base;
 using Exceptionless.Models;
 using FluentValidation;
-using MongoDB.Driver;
 using Nest;
+using NLog.Fluent;
 
 namespace Exceptionless.Core.Repositories {
     public abstract class ElasticSearchRepository<T> : ElasticSearchReadOnlyRepository<T>, IRepository<T> where T : class, IIdentity, new() {
@@ -34,7 +32,7 @@ namespace Exceptionless.Core.Repositories {
         protected readonly static bool _isOwnedByStack = typeof(IOwnedByStack).IsAssignableFrom(typeof(T));
         protected static readonly bool _isOrganization = typeof(T) == typeof(Organization);
 
-        protected ElasticSearchRepository(ElasticClient elasticClient, IValidator<T> validator = null, ICacheClient cacheClient = null, IMessagePublisher messagePublisher = null) : base(elasticClient, cacheClient) {
+        protected ElasticSearchRepository(IElasticClient elasticClient, IValidator<T> validator = null, ICacheClient cacheClient = null, IMessagePublisher messagePublisher = null) : base(elasticClient, cacheClient) {
             _validator = validator;
             _messagePublisher = messagePublisher;
             EnableNotifications = true;
@@ -61,9 +59,17 @@ namespace Exceptionless.Core.Repositories {
             if (_validator != null)
                 documents.ForEach(_validator.ValidateAndThrow);
 
-            var result = _elasticClient.IndexMany(documents);
-            if (!result.IsValid)
-                throw new ArgumentException(String.Join("\r\n", result.ItemsWithErrors.Select(i => i.Error)));
+            if (_isEvent)
+                foreach (var group in documents.Cast<PersistentEvent>().GroupBy(e => e.Date.ToUniversalTime().Date)) {
+                    var result = _elasticClient.IndexMany(group.ToList(), type: "events", index: String.Concat(EventsIndexName, "-", group.Key.ToString("yyyyMM")));
+                    if (!result.IsValid)
+                        throw new ArgumentException(String.Join("\r\n", result.ItemsWithErrors.Select(i => i.Error)));
+                }
+            else {
+                var result = _elasticClient.IndexMany(documents);
+                if (!result.IsValid)
+                    throw new ArgumentException(String.Join("\r\n", result.ItemsWithErrors.Select(i => i.Error)));
+            }
 
             AfterAdd(documents, addToCache, expiresIn);
         }
@@ -75,7 +81,7 @@ namespace Exceptionless.Core.Repositories {
                     Cache.Set(GetScopedCacheKey(document.Id), document, expiresIn.HasValue ? expiresIn.Value : TimeSpan.FromSeconds(RepositoryConstants.DEFAULT_CACHE_EXPIRATION_SECONDS));
 
                 if (EnableNotifications)
-                    PublishMessageAsync(EntityChangeType.Added, document);
+                    PublishMessage(EntityChangeType.Added, document);
             }
         }
 
@@ -111,12 +117,18 @@ namespace Exceptionless.Core.Repositories {
                 InvalidateCache(document);
 
                 if (sendNotification && EnableNotifications)
-                    PublishMessageAsync(EntityChangeType.Removed, document);
+                    PublishMessage(EntityChangeType.Removed, document);
             }
         }
 
-        public long RemoveAll(bool sendNotifications = true) {
-            return RemoveAll(new QueryOptions(), sendNotifications);
+        public void RemoveAll() {
+            Cache.FlushAll();
+            if (_isEvent)
+                _elasticClient.DeleteIndex(d => d.Index(String.Concat(EventsIndexName, "-*")));
+            else if (_isStack)
+                _elasticClient.DeleteIndex(d => d.Index(StacksIndexName));
+            else
+                RemoveAll(new QueryOptions(), false);
         }
 
         protected long RemoveAll(QueryOptions options, bool sendNotifications = true) {
@@ -134,9 +146,9 @@ namespace Exceptionless.Core.Repositories {
             long recordsAffected = 0;
 
             var searchDescriptor = new SearchDescriptor<T>()
-                .Query(options.GetElasticSearchQuery<T>() ?? Query<T>.MatchAll())
+                .Filter(options.GetElasticSearchFilter<T>() ?? Filter<T>.MatchAll())
                 .Source(s => s.Include(fields.ToArray()))
-                .Take(RepositoryConstants.BATCH_SIZE);
+                .Size(RepositoryConstants.BATCH_SIZE);
 
             var documents = _elasticClient.Search<T>(searchDescriptor).Documents.ToList();
             while (documents.Count > 0) {
@@ -168,9 +180,16 @@ namespace Exceptionless.Core.Repositories {
             if (_validator != null)
                 documents.ForEach(_validator.ValidateAndThrow);
 
-            var result = _elasticClient.IndexMany(documents);
-            if (!result.IsValid)
-                throw new ArgumentException(String.Join("\r\n", result.ItemsWithErrors.Select(i => i.Error)));
+            if (_isEvent)
+                foreach (var group in documents.Cast<PersistentEvent>().GroupBy(e => e.Date.ToUniversalTime().Date)) {
+                    var result = _elasticClient.IndexMany(group.ToList(), type: "events", index: String.Concat(EventsIndexName, "-", group.Key.ToString("yyyyMM")));
+                    if (!result.IsValid)
+                        throw new ArgumentException(String.Join("\r\n", result.ItemsWithErrors.Select(i => i.Error)));
+            } else {
+                var result = _elasticClient.IndexMany(documents);
+                if (!result.IsValid)
+                    throw new ArgumentException(String.Join("\r\n", result.ItemsWithErrors.Select(i => i.Error)));
+            }
 
             AfterSave(documents, addToCache, expiresIn);
         }
@@ -182,36 +201,56 @@ namespace Exceptionless.Core.Repositories {
                     Cache.Set(GetScopedCacheKey(document.Id), document, expiresIn.HasValue ? expiresIn.Value : TimeSpan.FromSeconds(RepositoryConstants.DEFAULT_CACHE_EXPIRATION_SECONDS));
 
                 if (EnableNotifications)
-                    PublishMessageAsync(EntityChangeType.Saved, document);
+                    PublishMessage(EntityChangeType.Saved, document);
             }
         }
 
-        protected long UpdateAll(QueryOptions options, string update, bool sendNotifications = true) {
-            //var result = _collection.Update(options.GetMongoQuery(_getIdValue), update, UpdateFlags.Multi);
-            //if (!sendNotifications || !EnableNotifications || _messagePublisher == null)
-            //    return result.DocumentsAffected;
+        protected long UpdateAll(string organizationId, QueryOptions options, object update, bool sendNotifications = true) {
+            long recordsAffected = 0;
 
-            //if (options.OrganizationIds.Any()) {
-            //    foreach (var orgId in options.OrganizationIds) {
-            //        PublishMessageAsync(new EntityChanged {
-            //            ChangeType = EntityChangeType.UpdatedAll,
-            //            OrganizationId = orgId,
-            //            Type = _entityType
-            //        });
-            //    }
-            //} else {
-            //    PublishMessageAsync(new EntityChanged {
-            //        ChangeType = EntityChangeType.UpdatedAll,
-            //        Type = _entityType
-            //    });
-            //}
+            var searchDescriptor = new SearchDescriptor<T>()
+                .Filter(options.GetElasticSearchFilter<T>() ?? Filter<T>.MatchAll())
+                .Source(s => s.Include(f => f.Id))
+                .SearchType(SearchType.Scan)
+                .Scroll("4s")
+                .Size(RepositoryConstants.BATCH_SIZE);
 
-            //return result.DocumentsAffected;
+            var scanResults = _elasticClient.Search<T>(searchDescriptor);
+            var results = _elasticClient.Scroll<T>("4s", scanResults.ScrollId);
+            while (results.Hits.Any()) {
+                var bulkResult = _elasticClient.Bulk(b => {
+                    var script = update as string;
+                    if (script != null)
+                        results.Hits.ForEach(h => b.Update<T>(u => u.Id(h.Id).Index(h.Index).Script(script)));
+                    else
+                        results.Hits.ForEach(h => b.Update<T, object>(u => u.Id(h.Id).Index(h.Index).Doc(update)));
 
-            return 0;
+                    return b;
+                });
+
+                if (!bulkResult.IsValid) {
+                    Log.Error().Message("Error occurred while bulk updating");
+                    return 0;
+                }
+
+                results.Hits.ForEach(d => InvalidateCache(d.Id));
+
+                recordsAffected += results.Documents.Count();
+                results = _elasticClient.Scroll<T>("4s", results.ScrollId);
+            }
+
+            if (EnableNotifications && sendNotifications) {
+                PublishMessage(new EntityChanged {
+                    ChangeType = EntityChangeType.UpdatedAll,
+                    OrganizationId = organizationId,
+                    Type = _entityType
+                });
+            }
+
+            return recordsAffected;
         }
 
-        protected virtual async Task PublishMessageAsync(EntityChangeType changeType, T document) {
+        protected virtual void PublishMessage(EntityChangeType changeType, T document) {
             var orgEntity = document as IOwnedByOrganization;
             var message = new EntityChanged {
                 ChangeType = changeType,
@@ -220,11 +259,12 @@ namespace Exceptionless.Core.Repositories {
                 Type = _entityType
             };
 
-            await PublishMessageAsync(message);
+            PublishMessage(message);
         }
 
-        protected Task PublishMessageAsync<TMessageType>(TMessageType message) where TMessageType : class {
-            return _messagePublisher != null ? _messagePublisher.PublishAsync(message) : Task.FromResult(0);
+        protected void PublishMessage<TMessageType>(TMessageType message) where TMessageType : class {
+            if (_messagePublisher != null)
+                _messagePublisher.Publish(message);
         }
     }
 }
